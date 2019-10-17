@@ -110,42 +110,78 @@ class NodeBVH:
 
 
 
-# update world_head and world_tail by anim_data with anim_idx
+    # update world_head and world_tail by anim_data with anim_idx
+    @classmethod
+    def updateNodesWorldPosition(cls, nodes_bvh, frame_idx, model_matrix = Matrix.Identity(4)):
+        # search root
+        root = None
+        for node in nodes_bvh.values():
+            if node.parent is None:
+                root = node
+                break
 
-def updateNodesWorldPosition(nodes_bvh, frame_idx, model_matrix = Matrix.Identity(4)):
-    # search root
-    root = None
-    for node in nodes_bvh.values():
-        if node.parent is None:
-            root = node
-            break
+        cls.updateWorldPosition(root, model_matrix, frame_idx)
 
-    NodeBVH.updateWorldPosition(root, model_matrix, frame_idx)
-            
+class MotionPathAnimationCollection:
+    def __init__(self, context):
+        self.context = context
+        self.animation_list = []
+    
+    
+    # parameter
+    # animation_collection: collection of update animation
+    def updateAnimation(self, animation_collection):
+        for animation in self.animation_list:
+            if animation.collection is animation_collection:
+                animation.updateAnimation()
+
+
+    def loadBVH(self):
+        new_path_animation = MotionPathAnimation(self.context)
+        self.animation_list.append(new_path_animation)
+
+# data structure in outliner of blender
+# name.bvh              (bpy.types.collection)
+# +---skeleton          (bpy.types.collection)
+# |   +---root          (bpy.types.object)
+# |       +---mesh      (bpy.types.mesh)
+# +---path
+#     +---init_path
+#     |   +---curve     (bpy.types.curve)(type: 'POLY')
+#     +---init_motion
+#     |   +---curve     (bpy.types.curve)(type: 'POLY')
+#     +---new_path
+#     |   +---curve     (bpy.types.curve)(type: 'POLY')
+#     +---new motion
+#     |   +---curve     (bpy.types.curve)(type: 'POLY')
+#     +---control_points(bpy.types.collection)
+#         +---C_0
+#         +---C_1
+#         +---and so on...
+
 # use bvh animation to implement Motion Path Editing
+# self.collection:  bpy.types.collection, is this animation group
+# self.skeleton:    bpy.types.collection
+# self.path:        bpy.types.collection
+
 # self.context
 # self.nodes_bvh
 # self.frames_bvh
 # self.frame_time_bvh
-# self.path: str, bvh file path
+# self.file_path: str, bvh file path
 # self.name: str
-# self.collection:  bpy.ops.collection.create(), is this animation group
-# self.nodes:       list[object(cube mesh)], objects of node of skeleton 
-# self.skeleton:    list[object(line mesh)], objects of skeleton
+
 # self.init_motion:     object(curve), curve of initial motion
 # self.init_path:       object(curve), use least square method fit initial motion as initial path of cubic b-spline
-# self.init_c_points:   list[Vector]
-# self.path:            object(curve), user can edit path_c_points to adjust this path
-# self.path_c_points_ob:list[object(cube mesh)], control points of path
-# self.path_c_points
+# self.new_path:            object(curve), user can edit path_c_points to adjust this path
 # self.new_motion
-# self.has_animation:   bool, have animation of keyframe
 
-class MotionPathEditing:
+# self.init_to_new_matrixs: list[Matrix]
+
+class MotionPathAnimation:
     def __init__(self, context):
         self.context = context
-        self.has_animation = False
-        self.model_mat_list = None
+        self.init_to_new_matrixs = None
 
     # return:
     # nodes_bvh: dict[name:NodeBVH]
@@ -155,16 +191,16 @@ class MotionPathEditing:
     # context: bpy.context
     # file_path: str, path of bvh
     def load_bvh(self, file_path):
-        self.path = file_path
-        self.nodes_bvh, self.frames_bvh, self.frame_time_bvh = self.readNodeBVH(self.path)
+        self.file_path = file_path
+        self.nodes_bvh, self.frames_bvh, self.frame_time_bvh = self.readNodeBVH(self.file_path)
 
-        folder, file_name = os.path.split(self.path )
-        self.name = file_name
+        # folder, file_name = os.path.split(self.path)
+        # self.name = file_name
+        base = os.path.basename(file_path)
+        self.name = os.path.splitext(base)[0]
 
         # create collection(or group) to collect object
-        bpy.ops.collection.create(name=self.name)
-        self.collection = bpy.data.collections[self.name]
-        self.context.scene.collection.children.link(self.collection)
+        self.collection = createCollection(self.context.scene.collection, self.name)
 
         self.nodes, self.skeleton = self.createSkeleton()
     
@@ -181,13 +217,11 @@ class MotionPathEditing:
                 "frame rate"
             )
         else:
-            self.readKeyFrameBVH(self.path)
-            self.createKeyFrame(self.model_mat_list)
+            self.readKeyFrameBVH(self.file_path)
 
-            self.init_motion = self.createInitialMotionCurve()
-            self.path_c_points_ob, self.init_c_points, self.path_c_points, self.init_path, self.path = self.createPathCurve()
-            self.new_motion = self.createNewMotionCurve()
-
+            self.createPath()
+            # create initial key frame animation
+            self.createKeyFrame()
 
             # register handler to trigger event
             from bpy.app.handlers import persistent
@@ -196,15 +230,11 @@ class MotionPathEditing:
             def change_cotrol_point_handler(scene):
                 for ob in self.context.selected_objects:
                     # is control point
-                    if ob.name in {point.name for point in self.path_c_points_ob}:
+                    # if ob.name in {point.name for point in self.path_c_points_ob}:
+                    if ob.users_collection[0] is self.control_points:
                         # update bspline
-                        self.updatePathCurve()
+                        self.updateNewPathAndMotionCurve()
                         break
-
-                if len(self.context.selected_objects) == 0 and self.delete_path == False:
-                    if self.has_animation == False:
-                        self.createKeyFrame(self.model_mat_list)
-               
 
             bpy.app.handlers.depsgraph_update_pre.clear()
             bpy.app.handlers.depsgraph_update_pre.append(change_cotrol_point_handler)
@@ -426,20 +456,22 @@ class MotionPathEditing:
 
     #
     def createSkeleton(self):
+        self.skeleton = createCollection(self.collection, self.name+".skeleton")
+
         nodes_ob = []
         # create cube to represent node
         for node in self.nodes_bvh.values():
-            nodes_ob.append(createCube(self.collection, self.name+"_"+node.name+"_head", node.world_head.xyz))
+            nodes_ob.append(createCube(self.skeleton, node.name+"_head", node.world_head.xyz))
             # is leaf
             if len(node.children) == 0:
                 nodes_ob.append(
-                    createCube(self.collection, self.name+"_"+node.name+"_tail", node.world_tail.xyz))
+                    createCube(self.skeleton, node.name+"_tail", node.world_tail.xyz))
 
         skeleton_ob = []
         # create mesh of line to represent skeleton
         for node in self.nodes_bvh.values():
             skeleton_ob.append(
-                createLine(self.collection, self.name+"_"+node.name, node.world_head.xyz, node.world_tail.xyz))
+                createLine(self.skeleton, node.name, node.world_head.xyz, node.world_tail.xyz))
 
         return nodes_ob, skeleton_ob
 
@@ -448,45 +480,48 @@ class MotionPathEditing:
 
         for frame_idx in range(self.frames_bvh):
             for node in self.nodes_bvh.values():
-                ob = bpy.data.objects[self.name+"_"+node.name+"_head"]
+                ob = bpy.data.objects[node.name+"_head"]
                 ob.keyframe_delete(data_path="location", index=-1)
                 if len(node.children) == 0:
-                    ob = bpy.data.objects[self.name+"_"+node.name+"_tail"]
+                    ob = bpy.data.objects[node.name+"_tail"]
                     ob.keyframe_delete(data_path="location", index=-1)
 
-                ob = bpy.data.objects[self.name+"_"+node.name]
+                ob = bpy.data.objects[node.name]
                 ob.keyframe_delete(data_path="location", index=-1)
                 ob.keyframe_delete(data_path="rotation_quaternion", index=-1)
 
-    
     #
-    def createKeyFrame(self, model_mat_list):
-        self.has_animation = True
+    def createPath(self):
+        self.path = createCollection(self.collection, self.name+".path")
 
+        self.init_motion                = self.createInitialMotionCurve()
+        self.init_path, self.new_path   = self.createPathCurve()
+        self.new_motion                 = self.createNewMotionCurve()
+
+
+    #
+    def createKeyFrame(self):
         for frame_idx in range(self.frames_bvh):
-            if model_mat_list is None:
-                updateNodesWorldPosition(self.nodes_bvh, frame_idx)
-            else:
-                 updateNodesWorldPosition(self.nodes_bvh, frame_idx, model_mat_list[frame_idx])
+            NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx, self.init_to_new_matrixs[frame_idx])
 
             self.context.scene.frame_set(frame_idx)
 
             for node in self.nodes_bvh.values():
                 # head
-                ob = bpy.data.objects[self.name+"_"+node.name+"_head"]
+                ob = bpy.data.objects[node.name+"_head"]
 
                 ob.location = (node.world_head.xyz)
                 ob.keyframe_insert(data_path="location", index=-1)
 
                 # is leaf
                 if len(node.children) == 0:
-                    ob = bpy.data.objects[self.name+"_"+node.name+"_tail"]
+                    ob = bpy.data.objects[node.name+"_tail"]
 
                     ob.location = (node.world_tail.xyz)
                     ob.keyframe_insert(data_path="location", index=-1)
 
                 # line of head_to_tail
-                ob = bpy.data.objects[self.name+"_"+node.name]
+                ob = bpy.data.objects[node.name]
                 me = ob.data
 
                 ob.location = (node.world_head.xyz)
@@ -495,6 +530,12 @@ class MotionPathEditing:
                 ob.rotation_mode = 'QUATERNION'
                 ob.rotation_quaternion = (node.model_mat).to_quaternion()
                 ob.keyframe_insert(data_path="rotation_quaternion", index=-1)
+
+    #
+    def updateKeyFrame(self):
+        self.deleteKeyFrame()
+        self.createKeyFrame()
+
 
     #
     def createInitialMotionCurve(self):
@@ -508,16 +549,48 @@ class MotionPathEditing:
                 break
 
         for frame_idx in range(self.frames_bvh):
-            updateNodesWorldPosition(self.nodes_bvh, frame_idx)
+            NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx)
             curve.append((root.world_head))
 
-        return createPolyCurve(self.context, self.collection, "initial_motion", curve)
+        return createPolyCurve(self.context, self.path, "initial_motion", curve)
 
+
+    # 
+    def createPathCurve(self):
+
+        self.control_points = createCollection(self.path, self.name+".control_points")
+
+        c_points = solveCubicBspline(self.init_motion.data.splines[0].points.values())
+        for i in range(len(c_points)):
+            createCube(self.control_points, "c_"+str(i), c_points[i], 10.0)
+
+        
+        # compute parameter t by chord-length
+        Q = []
+        for point in self.init_motion.data.splines[0].points.values():
+            Q.append(point.co.xyz)
+        # have n point, 0 <= i <= n-1
+        n = len(Q)
+        # computer distance of curve
+        d = 0
+        for i in range(1, n):
+            d += (Q[i] - Q[i-1]).length
+
+        # define t[i] with chord-length
+        # t[0] = 0, t[n-1] = 1
+        self.t = [0.0,]
+        for i in range(1, n):
+            self.t.append(self.t[i-1] + (Q[i] - Q[i-1]).length/d)
+        self.t[n-1] = 1.0
+
+        return (
+        createCubicBspline(self.context, self.path, c_points, "init_path", self.t),
+        createCubicBspline(self.context, self.path, c_points, "new_path", self.t))
 
     #
-    def updatePathCurve(self):
+    def updateNewPathAndMotionCurve(self):
 
-        path_name = self.path.name
+        path_name = self.new_path.name
         motion_name = self.new_motion.name
 
         selected = []
@@ -532,180 +605,58 @@ class MotionPathEditing:
             else:
                 ob.select_set(False)
 
-        self.delete_path = True 
         bpy.ops.object.delete()
         
         for ob in selected:
             ob.select_set(True)
 
-        self.path_c_points = []
-        for ob in self.path_c_points_ob:
-            self.path_c_points.append(ob.location)
+        c_points = []
+        for c_point_ob in self.control_points.all_objects.values():
+            c_points.append(c_point_ob.location.xyz)
 
-        self.path = createCubicBspline(self.context, self.collection, self.path_c_points, path_name)
+        self.new_path = createCubicBspline(self.context, self.path, c_points, path_name, self.t)
         self.new_motion = self.createNewMotionCurve()
-
-        self.delete_path = False 
-
-
-
-    # initial_curve_ob: bpy_types.Object it have a curve 
-    def createPathCurve(self):
-
-        # return c_points_ob: list[object], object of control points
-        def solveCubicBspline(collection, initial_curve_ob):
-            if initial_curve_ob.type == 'CURVE':
-                init_curve = initial_curve_ob.data
-
-            # points of initial path is data point 
-            Q = []
-            for point in init_curve.splines[0].points.values():
-                Q.append(point.co.xyz)
-
-            # have n point, 0 <= i <= n-1
-            n = len(Q)
-
-            # use cubic b-spline to fit
-            def B3_0(t):
-                return 0.16667 * (1-t) * (1-t) * (1-t)
-            def B3_1(t):
-                return 0.16667 * (3*t*t*t - 6*t*t + 4)
-            def B3_2(t):
-                return 0.16667 * (-3*t*t*t + 3*t*t + 3*t + 1)
-            def B3_3(t):
-                return 0.16667 * t*t*t
-            
-            # computer distance of curve
-            d = 0
-            for i in range(1, n):
-                d += (Q[i] - Q[i-1]).length
-
-            # define t[i] with chord-length
-            # t[0] = 0, t[n-1] = 1
-            t = [0,]
-            for i in range(1, n):
-                t.append(t[i-1] + (Q[i] - Q[i-1]).length/d)
-            t[n-1] = 1
-
-            # use least square
-            # solve Ax = b
-            A = Matrix(([0, 0, 0, 0],[0, 0, 0, 0],[0, 0, 0, 0],[0, 0, 0, 0]))
-            # 4 control point 
-            p = [Vector(), Vector(), Vector(), Vector()]
-
-            # A
-            for i in range(0, n):
-                B0 = B3_0(t[i])
-                B1 = B3_1(t[i])
-                B2 = B3_2(t[i])
-                B3 = B3_3(t[i])
-
-                A[0][0] +=  B0 * B0
-                A[0][1] +=  B0 * B1
-                A[0][2] +=  B0 * B2
-                A[0][3] +=  B0 * B3
-
-                A[1][1] +=  B1 * B1
-                A[1][2] +=  B1 * B2
-                A[1][3] +=  B1 * B3
-
-                A[2][2] +=  B2 * B2
-                A[2][3] +=  B2 * B3
-
-                A[3][3] +=  B3 * B3
-
-            A[1][0] = A[0][1]
-
-            A[2][0] = A[0][2]
-            A[2][1] = A[1][2]
-
-            A[3][0] = A[0][3]
-            A[3][1] = A[1][3]
-            A[3][2] = A[2][3]
-
-            # dimension mean is x, y, z
-            for dimension in range(0, 3):
-                b = Vector([0, 0, 0, 0])
-                for i in range(0, n):
-                    b[0] += B3_0(t[i]) * Q[i][dimension]
-                    b[1] += B3_1(t[i]) * Q[i][dimension]
-                    b[2] += B3_2(t[i]) * Q[i][dimension]
-                    b[3] += B3_3(t[i]) * Q[i][dimension]
-
-                x = Vector()
-
-                # solve Ax = b
-                # x = inverse(A)b
-                x = A.inverted() @ b
-
-                p[0][dimension] = x[0]
-                p[1][dimension] = x[1]
-                p[2][dimension] = x[2]
-                p[3][dimension] = x[3]
-
-            return p
-
-        c_points = solveCubicBspline(self.collection, self.init_motion)
-
-        c_points_ob = []
-        for i in range(0,4):
-            c_points_ob.append(createCube(self.collection, "control_"+str(i), c_points[i], 10.0))
-
-        return (c_points_ob, c_points, c_points.copy(),
-        createCubicBspline(self.context, self.collection, c_points, "init_path"), 
-        createCubicBspline(self.context, self.collection, c_points, "path"))
-
-    def createNewMotionCurve(self, subdivision = 100):
-        # points of initial path is data point 
-        Q = []
-        for point in self.init_motion.data.splines[0].points.values():
-            Q.append(point.co.xyz)
-        # have n point, 0 <= i <= n-1
-        n = len(Q)
-        # computer distance of curve
-        d = 0
-        for i in range(1, n):
-            d += (Q[i] - Q[i-1]).length
-
-        # define t[i] with chord-length
-        # t[0] = 0, t[n-1] = 1
-        t = [0,]
-        for i in range(1, n):
-            t.append(t[i-1] + (Q[i] - Q[i-1]).length/d)
-        t[n-1] = 1
-        
-        curve = []
-        
+    def createNewMotionCurve(self):
         # use root to track curve
         root = None
         for node in self.nodes_bvh.values():
             if node.parent is None:
                 root = node
                 break
+        
+        curve = []
 
-        self.model_mat_list = []
-        for frame_idx in range(self.frames_bvh):
-            p0 = cubicBspline(t[frame_idx], self.init_c_points)
-            p = cubicBspline(t[frame_idx], self.path_c_points)
+        self.init_to_new_matrixs = []
+        init_curve  = self.init_path.data.splines[0].points.values()
+        new_curve   = self.new_path.data.splines[0].points.values()
+        for i in range(self.frames_bvh):
+            p0  = init_curve[i].co
+            p   = new_curve[i].co
 
             P0 = Matrix.Translation(p0)
             P = Matrix.Translation(p)
 
-            model_matrix = P @ P0.inverted()
+            matrix = P @ P0.inverted()
 
-            self.model_mat_list.append(model_matrix)
+            self.init_to_new_matrixs.append(matrix)
             
-            updateNodesWorldPosition(self.nodes_bvh, frame_idx, model_matrix)
+            NodeBVH.updateNodesWorldPosition(self.nodes_bvh, i, matrix)
             curve.append((root.world_head))
-
-        if self.has_animation == True:
-            self.deleteKeyFrame()
         
-        return createPolyCurve(self.context, self.collection, "new_motion", curve)
+        return createPolyCurve(self.context, self.path, "new_motion", curve)
             
 
-
-
+# create collection under parent collection
+# return:
+# coll: bpy.types.collection, created collection
+# parameter:
+# parent_collection:    bpy.types.collection
+# collection_name:      str
+def createCollection(parent_collection, collection_name):
+    bpy.ops.collection.create(name=collection_name)
+    coll = bpy.data.collections[collection_name]
+    parent_collection.children.link(coll)
+    return coll
 
 # node: NodeBVH
 # name: str
@@ -821,17 +772,120 @@ def cubicBspline(t, c_points):
     return b_point
 
 # c_points: list[Vector], object of control points
-# subdivision: int, number of interval
-def createCubicBspline(context, collection, c_points, name, subdivision = 100):
+# t: list[float], 0.0<=t_list[i]<=1.0
+def createCubicBspline(context, collection, c_points, name, t):
     
     # points of Bspline
     Bspline = []
 
-    for i in range(subdivision + 1):
-        t = i / subdivision
-        Bspline.append(cubicBspline(t, c_points))
+    for i in range(len(t)):
+        Bspline.append(cubicBspline(t[i], c_points))
+
+    # for i in range(subdivision + 1):
+    #     t = i / subdivision
+    #     Bspline.append(cubicBspline(t, c_points))
 
     return createPolyCurve(context, collection, name, Bspline)
+
+# return 
+# c_points:     list[Vector], control points
+# parameter
+# initial_curve:list[Vector]
+def solveCubicBspline(initial_curve):
+    # if initial_curve_ob.type == 'CURVE':
+    #     init_curve = initial_curve_ob.data
+
+    # # points of initial path is data point 
+    # Q = []
+    # for point in init_curve.splines[0].points.values():
+    #     Q.append(point.co.xyz)
+
+    Q = []
+    for point in initial_curve:
+        Q.append(point.co.xyz)
+
+    # have n point, 0 <= i <= n-1
+    n = len(Q)
+
+    # use cubic b-spline to fit
+    def B3_0(t):
+        return 0.16667 * (1-t) * (1-t) * (1-t)
+    def B3_1(t):
+        return 0.16667 * (3*t*t*t - 6*t*t + 4)
+    def B3_2(t):
+        return 0.16667 * (-3*t*t*t + 3*t*t + 3*t + 1)
+    def B3_3(t):
+        return 0.16667 * t*t*t
+    
+    # computer distance of curve
+    d = 0
+    for i in range(1, n):
+        d += (Q[i] - Q[i-1]).length
+
+    # define t[i] with chord-length
+    # t[0] = 0, t[n-1] = 1
+    t = [0,]
+    for i in range(1, n):
+        t.append(t[i-1] + (Q[i] - Q[i-1]).length/d)
+    t[n-1] = 1
+
+    # use least square
+    # solve Ax = b
+    A = Matrix(([0, 0, 0, 0],[0, 0, 0, 0],[0, 0, 0, 0],[0, 0, 0, 0]))
+    # 4 control point 
+    p = [Vector(), Vector(), Vector(), Vector()]
+
+    # A
+    for i in range(0, n):
+        B0 = B3_0(t[i])
+        B1 = B3_1(t[i])
+        B2 = B3_2(t[i])
+        B3 = B3_3(t[i])
+
+        A[0][0] +=  B0 * B0
+        A[0][1] +=  B0 * B1
+        A[0][2] +=  B0 * B2
+        A[0][3] +=  B0 * B3
+
+        A[1][1] +=  B1 * B1
+        A[1][2] +=  B1 * B2
+        A[1][3] +=  B1 * B3
+
+        A[2][2] +=  B2 * B2
+        A[2][3] +=  B2 * B3
+
+        A[3][3] +=  B3 * B3
+
+    A[1][0] = A[0][1]
+
+    A[2][0] = A[0][2]
+    A[2][1] = A[1][2]
+
+    A[3][0] = A[0][3]
+    A[3][1] = A[1][3]
+    A[3][2] = A[2][3]
+
+    # dimension mean is x, y, z
+    for dimension in range(0, 3):
+        b = Vector([0, 0, 0, 0])
+        for i in range(0, n):
+            b[0] += B3_0(t[i]) * Q[i][dimension]
+            b[1] += B3_1(t[i]) * Q[i][dimension]
+            b[2] += B3_2(t[i]) * Q[i][dimension]
+            b[3] += B3_3(t[i]) * Q[i][dimension]
+
+        x = Vector()
+
+        # solve Ax = b
+        # x = inverse(A)b
+        x = A.inverted() @ b
+
+        p[0][dimension] = x[0]
+        p[1][dimension] = x[1]
+        p[2][dimension] = x[2]
+        p[3][dimension] = x[3]
+
+    return p
 
 
 

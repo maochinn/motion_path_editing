@@ -1,37 +1,27 @@
 bl_info = {
-    "name": "BVH parser",
+    "name": "BVH parser & motion path editing",
     "author": "maochinn",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (2, 81, 6),
     "location": "File > Import",
     "description": "import .bvh file",
     "warning": "",
     "wiki_url": "",
-    "support": '',
+    "support": 'TESTING',
     "category": "Import-Export",
 }
 
 
 import bpy
 
-
-def read_some_data(context, filepath, use_some_setting):
-    print("running read_some_data...")
-    f = open(filepath, 'r', encoding='utf-8')
-    data = f.read()
-    f.close()
-
-    # would normally load the data here
-    print(data)
-
-    return {'FINISHED'}
-
-
 # ImportHelper is a helper class, defines filename and
 # invoke() function which calls the file selector.
 from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
+
+# global
+path_animation = None
 
 
 class MAOImportBVH(Operator, ImportHelper):
@@ -68,10 +58,40 @@ class MAOImportBVH(Operator, ImportHelper):
     def execute(self, context):
         
         from . import importBvh
+        
+        global path_animation
+        path_animation = importBvh.MotionPathAnimation(context)
 
-        self.path_editing = importBvh.MotionPathEditing(context)
+        return path_animation.load_bvh(self.filepath)
 
-        return self.path_editing.load_bvh(self.filepath)
+class MAOGenerateAnimation(Operator):
+    bl_idname = "mao_animation.keyframe"
+    bl_label = "generate key frame animation by bvh animation"
+    bl_description = "OUO/"
+
+    @classmethod
+    def poll(cls, context):
+        if path_animation is not None:
+            if context.collection is path_animation.collection:
+                return True
+        return False        
+            
+    def execute(self, context):
+        path_animation.updateKeyFrame()
+        return {'FINISHED'}
+
+class MAOGenerateAnimationPanel(bpy.types.Panel):
+    bl_idname = "MAO_PT_GENERATE_ANIMATION"
+    bl_label = "mao generate animation panel"
+    bl_category = "Test Addon"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        row = layout.row()
+        row.operator('mao_animation.keyframe', text = "generate animation")
 
 
 # Only needed if you want to add into a dynamic menu
@@ -81,11 +101,16 @@ def menu_func_import(self, context):
 
 def register():
     bpy.utils.register_class(MAOImportBVH)
+    bpy.utils.register_class(MAOGenerateAnimation)
+    bpy.utils.register_class(MAOGenerateAnimationPanel)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+    
 
 
 def unregister():
     bpy.utils.unregister_class(MAOImportBVH)
+    bpy.utils.unregister_class(MAOGenerateAnimation)
+    bpy.utils.unregister_class(MAOGenerateAnimationPanel)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
 
 
