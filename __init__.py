@@ -33,8 +33,6 @@ from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
 
-# global
-global_animations = []
 
 class MAOImportBVH(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -68,17 +66,12 @@ class MAOImportBVH(Operator, ImportHelper):
             )
 
     def execute(self, context):
-
-
+        
         from . import importBvh
 
-        new_animation = importBvh.MotionPathAnimation(context)
-        new_animation.load_bvh(self.filepath)
-        
-        global global_animations
-        global_animations.append(new_animation)
+        self.path_editing = importBvh.MotionPathEditing(context)
 
-        return {'FINISHED'}
+        return self.path_editing.load_bvh(self.filepath)
 
 
 # Only needed if you want to add into a dynamic menu

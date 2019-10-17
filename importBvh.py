@@ -56,7 +56,6 @@ class NodeBVH:
         self.position_idx = position_idx
         self.rotation_idx = rotation_idx
         self.index = index
-        self.model_mat = Matrix.Idenetity(4)
 
         # convenience functions
         # self.has_loc = channels[0] != -1 or channels[1] != -1 or channels[2] != -1
@@ -111,46 +110,26 @@ class NodeBVH:
 
 
 
-    # update world_head and world_tail by anim_data with anim_idx
-    @classmethod
-    def updateNodesWorldPosition(cls, nodes_bvh, frame_idx, model_matrix = Matrix.Identity(4)):
-        # search root
-        root = None
-        for node in nodes_bvh.values():
-            if node.parent is None:
-                root = node
-                break
+# update world_head and world_tail by anim_data with anim_idx
 
-        cls.updateWorldPosition(root, model_matrix, frame_idx)
+def updateNodesWorldPosition(nodes_bvh, frame_idx, model_matrix = Matrix.Identity(4)):
+    # search root
+    root = None
+    for node in nodes_bvh.values():
+        if node.parent is None:
+            root = node
+            break
+
+    NodeBVH.updateWorldPosition(root, model_matrix, frame_idx)
             
 # use bvh animation to implement Motion Path Editing
-# data structure in outliner of blender
-# name.bvh  (self.collection)
-#     skeleton  (self.skeleton)
-#         some object or node with mesh...
-#     new_path  (self.new_path)
-#         control_0
-#         control_1
-#         control_2
-#         control_3
-#         new_path_curve
-#         new_motion_curve
-#     init_path (self.init_path)
-#         init_path_curve
-#         init_motion_curve
-
 # self.context
 # self.nodes_bvh
 # self.frames_bvh
 # self.frame_time_bvh
 # self.path: str, bvh file path
 # self.name: str
-# self.collection:  bpy.types.Collection, is this animation group
-# self.new_path:    bpy.types.Collection
-# self.init_path:   bpy.types.Collection
-
-
-
+# self.collection:  bpy.ops.collection.create(), is this animation group
 # self.nodes:       list[object(cube mesh)], objects of node of skeleton 
 # self.skeleton:    list[object(line mesh)], objects of skeleton
 # self.init_motion:     object(curve), curve of initial motion
@@ -161,14 +140,8 @@ class NodeBVH:
 # self.path_c_points
 # self.new_motion
 # self.has_animation:   bool, have animation of keyframe
-# self.init_path_transform_matrixs:  list[(P0, R0)], initial path transform matrix per key frame
-#   P0:  Matrix, initial path translation matrix
-#   R0:  Matrix, intital path rotation matrix
-# self.path_transform_matrixs:  list[(P, R)], new path transform matrix per key frame
-#   P:   Matrix, new path translation matrix
-#   R:   Matrix, new path rotation matrix
 
-class MotionPathAnimation:
+class MotionPathEditing:
     def __init__(self, context):
         self.context = context
         self.has_animation = False
@@ -228,9 +201,9 @@ class MotionPathAnimation:
                         self.updatePathCurve()
                         break
 
-                # if len(self.context.selected_objects) == 0 and self.delete_path == False:
-                #     if self.has_animation == False:
-                #         self.createKeyFrame(self.model_mat_list)
+                if len(self.context.selected_objects) == 0 and self.delete_path == False:
+                    if self.has_animation == False:
+                        self.createKeyFrame(self.model_mat_list)
                
 
             bpy.app.handlers.depsgraph_update_pre.clear()
@@ -465,11 +438,8 @@ class MotionPathAnimation:
         skeleton_ob = []
         # create mesh of line to represent skeleton
         for node in self.nodes_bvh.values():
-            ob = createLine(self.name+"_"+node.name, node.world_head.xyz, node.world_tail.xyz)
-            skeleton_ob.append(ob)
-            self.collection.objects.link(ob)
-            
-            
+            skeleton_ob.append(
+                createLine(self.collection, self.name+"_"+node.name, node.world_head.xyz, node.world_tail.xyz))
 
         return nodes_ob, skeleton_ob
 
@@ -495,9 +465,9 @@ class MotionPathAnimation:
 
         for frame_idx in range(self.frames_bvh):
             if model_mat_list is None:
-                NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx)
+                updateNodesWorldPosition(self.nodes_bvh, frame_idx)
             else:
-                NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx, model_mat_list[frame_idx])
+                 updateNodesWorldPosition(self.nodes_bvh, frame_idx, model_mat_list[frame_idx])
 
             self.context.scene.frame_set(frame_idx)
 
@@ -526,10 +496,6 @@ class MotionPathAnimation:
                 ob.rotation_quaternion = (node.model_mat).to_quaternion()
                 ob.keyframe_insert(data_path="rotation_quaternion", index=-1)
 
-    # 
-    def updateKeyFrame(self):
-        self.deleteKeyFrame()
-        self.createKeyFrame()
     #
     def createInitialMotionCurve(self):
         curve = []
@@ -542,7 +508,7 @@ class MotionPathAnimation:
                 break
 
         for frame_idx in range(self.frames_bvh):
-            NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx)
+            updateNodesWorldPosition(self.nodes_bvh, frame_idx)
             curve.append((root.world_head))
 
         return createPolyCurve(self.context, self.collection, "initial_motion", curve)
@@ -768,16 +734,15 @@ def createCube(collection, name, position, scale = 1.0):
 
     return ob
 
-# return
-# ob:   bpy.types.object
 # head_pos: position of head is Vector(x, y, z)
 # tail_pos: position of tail is Vector(x, y, z)
-def createLine(name, head_pos, tail_pos):
+def createLine(collection, name, head_pos, tail_pos):
 
     me = bpy.data.meshes.new(name)
     ob = bpy.data.objects.new(name, me)
     ob.location = head_pos
-  
+    collection.objects.link(ob)
+
     bm = bmesh.new()   # create an empty BMesh
     bm.from_mesh(me)   # fill it in from a Mesh
 
