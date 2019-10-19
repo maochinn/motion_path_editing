@@ -21,7 +21,7 @@ from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
 
 # global
-path_animation = None
+path_animations = []
 
 
 class MAOImportBVH(Operator, ImportHelper):
@@ -41,28 +41,34 @@ class MAOImportBVH(Operator, ImportHelper):
 
     # List of operator properties, the attributes will be assigned
     # to the class instance from the operator settings before calling.
-    use_setting = BoolProperty(
+    use_setting: BoolProperty(
             name="Example Boolean",
             description="Example Tooltip",
             default=True,
             )
 
-    type = EnumProperty(
-            name="Example Enum",
+    # blender's axis order is XYZ
+    # but usually use ZXY
+    axis: EnumProperty(
+            name="(Right, Front, Up))",
             description="Choose between two items",
-            items=(('OPT_A', "First Option", "Description one"),
-                   ('OPT_B', "Second Option", "Description two")),
-            default='OPT_A',
+            items=(('XYZ', "XYZ", "R:X, F:Y, U:Z"),
+                   ('ZXY', "ZXY", "R:Z, F:X, U:Y")),
+            default='ZXY',
             )
 
     def execute(self, context):
         
         from . import importBvh
         
-        global path_animation
-        path_animation = importBvh.MotionPathAnimation(context)
+        path_animation = importBvh.MotionPathAnimation(context, 
+        (self.axis[0], self.axis[1], self.axis[2]))
+        path_animation.load_bvh(self.filepath)
 
-        return path_animation.load_bvh(self.filepath)
+        global path_animations
+        path_animations.append(path_animation)
+
+        return {'FINISHED'}
 
 class MAOGenerateAnimation(Operator):
     bl_idname = "mao_animation.keyframe"
@@ -71,14 +77,19 @@ class MAOGenerateAnimation(Operator):
 
     @classmethod
     def poll(cls, context):
-        if path_animation is not None:
-            if context.collection is path_animation.collection:
-                return True
+        # path_animation is not empty
+        if path_animations:
+            for animation in path_animations:
+                if context.scene.select_collection_name == animation.collection.name:
+                    return True
         return False        
             
     def execute(self, context):
-        path_animation.updateKeyFrame()
-        return {'FINISHED'}
+        for animation in path_animations:
+            if context.scene.select_collection_name == animation.collection.name:
+                animation.updateKeyFrame()
+                return {'FINISHED'}
+        return {'PASS_THROUGH'}
 
 class MAOGenerateAnimationPanel(bpy.types.Panel):
     bl_idname = "MAO_PT_GENERATE_ANIMATION"
@@ -89,7 +100,18 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        
+        scene = context.scene               
+
+        row = layout.row()
+        # select collection will assign to context.scene.select_animation
+        # and search from bpy.data.collections
+        row.prop_search(
+            data=context.scene,
+            property="select_collection_name",
+            search_data=bpy.data,
+            search_property="collections",
+            text="select animation")
+
         row = layout.row()
         row.operator('mao_animation.keyframe', text = "generate animation")
 
@@ -104,6 +126,9 @@ def register():
     bpy.utils.register_class(MAOGenerateAnimation)
     bpy.utils.register_class(MAOGenerateAnimationPanel)
     bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+    # !!! regist this is important  !!!
+    # create new variable "context.scene.select_animation"
+    bpy.types.Scene.select_collection_name = bpy.props.StringProperty()
     
 
 

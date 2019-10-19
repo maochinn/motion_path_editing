@@ -8,7 +8,15 @@ import math
 import os
 from mathutils import Vector, Euler, Matrix
 
-
+# axis and index relationship
+axis_idx = {
+    0 : 'X',
+    1 : 'Y',
+    2 : 'Z',
+    'X' : 0,
+    'Y' : 1,
+    'Z' : 2,
+}
 
 class NodeBVH:
     __slots__ = (
@@ -39,11 +47,6 @@ class NodeBVH:
         # model_matix
         'model_mat',
     )
-    axis_lookup = {
-        0 : 'X',
-        1 : 'Y',
-        2 : 'Z',
-    }
 
     def __init__(self, name, local_head, world_head,
         parent, position_idx, rotation_idx ,index):
@@ -88,11 +91,27 @@ class NodeBVH:
 
         offset = Matrix.Translation(node.local_head)
         translation = Matrix.Translation((node.anim_data[idx][0:3]))
+
+        
+
         rotation_X = Matrix.Rotation(math.radians(node.anim_data[idx][3]), 4, 'X')
         rotation_Y = Matrix.Rotation(math.radians(node.anim_data[idx][4]), 4, 'Y')
         rotation_Z = Matrix.Rotation(math.radians(node.anim_data[idx][5]), 4, 'Z')
 
-        mat = offset @ translation @ rotation_Z @ rotation_X @ rotation_Y
+
+
+        rotation = Matrix.Identity(4)
+        # start = min(node.rotation_idx, key=node.rotation_idx.get)
+        start = min(node.rotation_idx.values())
+        for i in range(start, start+3):
+            if node.rotation_idx['X'] == i:
+                rotation = rotation @ rotation_X
+            elif node.rotation_idx['Y'] == i:
+                rotation = rotation @ rotation_Y
+            elif node.rotation_idx['Z'] == i:
+                rotation = rotation @ rotation_Z
+        
+        mat = offset @ translation @ rotation
 
         node.model_mat = parent_matrix @ mat
 
@@ -121,24 +140,6 @@ class NodeBVH:
                 break
 
         cls.updateWorldPosition(root, model_matrix, frame_idx)
-
-class MotionPathAnimationCollection:
-    def __init__(self, context):
-        self.context = context
-        self.animation_list = []
-    
-    
-    # parameter
-    # animation_collection: collection of update animation
-    def updateAnimation(self, animation_collection):
-        for animation in self.animation_list:
-            if animation.collection is animation_collection:
-                animation.updateAnimation()
-
-
-    def loadBVH(self):
-        new_path_animation = MotionPathAnimation(self.context)
-        self.animation_list.append(new_path_animation)
 
 # data structure in outliner of blender
 # name.bvh              (bpy.types.collection)
@@ -178,11 +179,15 @@ class MotionPathAnimationCollection:
 
 # self.init_to_new_matrixs: list[Matrix]
 
+
+# context: bpy.context
+# axis: dict, blender default:{(blender_axis:data_axis))}
 class MotionPathAnimation:
-    def __init__(self, context):
+    def __init__(self, context, axis=('X', 'Y', 'Z')):
         self.context = context
         self.init_to_new_matrixs = None
-
+        self.axis_b2d = {'X':axis[0], 'Y':axis[1], 'Z':axis[2]}
+        self.axis_d2b = {axis[0]:'X', axis[1]:'Y', axis[2]:'Z'}
     # return:
     # nodes_bvh: dict[name:NodeBVH]
     # frames: int, number of frames
@@ -202,7 +207,7 @@ class MotionPathAnimation:
         # create collection(or group) to collect object
         self.collection = createCollection(self.context.scene.collection, self.name)
 
-        self.nodes, self.skeleton = self.createSkeleton()
+        self.createSkeleton()
     
 
         if self.frame_time_bvh is None:
@@ -235,8 +240,10 @@ class MotionPathAnimation:
                         # update bspline
                         self.updateNewPathAndMotionCurve()
                         break
+            
+            # clear handler, if only one animation you can enable this!
+            # bpy.app.handlers.depsgraph_update_pre.clear()
 
-            bpy.app.handlers.depsgraph_update_pre.clear()
             bpy.app.handlers.depsgraph_update_pre.append(change_cotrol_point_handler)
                     
         return {'FINISHED'}
@@ -292,11 +299,14 @@ class MotionPathAnimation:
                 
                 # offset
                 line_idx += 2
+                
                 local_offset = Vector((
-                    float(file_lines[line_idx][1]),
-                    float(file_lines[line_idx][2]),
-                    float(file_lines[line_idx][3]),
+                    float(file_lines[line_idx][axis_idx[self.axis_b2d['X']]+1]),
+                    float(file_lines[line_idx][axis_idx[self.axis_b2d['Y']]+1]),
+                    float(file_lines[line_idx][axis_idx[self.axis_b2d['Z']]+1]),
                 ))
+                
+
 
                 # channels
                 line_idx += 1
@@ -306,18 +316,18 @@ class MotionPathAnimation:
                     channel = channel.lower()
 
                     if channel == 'xposition':
-                        position_idx['X'] = channelIndex
+                        position_idx[self.axis_d2b['X']] = channelIndex
                     elif channel == 'yposition':
-                        position_idx['Y'] = channelIndex
+                        position_idx[self.axis_d2b['Y']] = channelIndex
                     elif channel == 'zposition':
-                        position_idx['Z'] = channelIndex
+                        position_idx[self.axis_d2b['Z']] = channelIndex
 
                     elif channel == 'xrotation':
-                        rotation_idx['X'] = channelIndex
+                        rotation_idx[self.axis_d2b['X']] = channelIndex
                     elif channel == 'yrotation':
-                        rotation_idx['Y'] = channelIndex
+                        rotation_idx[self.axis_d2b['Y']] = channelIndex
                     elif channel == 'zrotation':
-                        rotation_idx['Z'] = channelIndex
+                        rotation_idx[self.axis_d2b['Z']] = channelIndex
 
                     channelIndex += 1
                     
@@ -344,9 +354,9 @@ class MotionPathAnimation:
                 #offset
                 line_idx += 2
                 offset = Vector((
-                    float(file_lines[line_idx][1]),
-                    float(file_lines[line_idx][2]),
-                    float(file_lines[line_idx][3]),
+                    float(file_lines[line_idx][axis_idx[self.axis_b2d['X']]+1]),
+                    float(file_lines[line_idx][axis_idx[self.axis_b2d['Y']]+1]),
+                    float(file_lines[line_idx][axis_idx[self.axis_b2d['Z']]+1]),
                 ))
                 nodes_stack[-1].local_tail = nodes_stack[-1].local_head + offset
                 nodes_stack[-1].world_tail = nodes_stack[-1].world_head + offset
@@ -435,7 +445,7 @@ class MotionPathAnimation:
                     if node.hasLocation():
                         for i in range(len(node.position_idx)):
                             # 0, 1, 2 -> lx, ly ,lz
-                            axis = NodeBVH.axis_lookup[i]
+                            axis = axis_idx[i]
                             idx = node.position_idx[axis] + line_idx
                             data[i] = float(line[idx])
                         
@@ -443,7 +453,7 @@ class MotionPathAnimation:
                     if node.hasRotation():
                         for i in range(len(node.rotation_idx)):
                             # 3, 4, 5 -> rx, ry ,rz
-                            axis = NodeBVH.axis_lookup[i]
+                            axis = axis_idx[i]
                             idx = node.rotation_idx[axis] + line_idx
                             data[i+3] = float(line[idx])
 
@@ -457,50 +467,32 @@ class MotionPathAnimation:
     #
     def createSkeleton(self):
         self.skeleton = createCollection(self.collection, self.name+".skeleton")
-
-        nodes_ob = []
+        
         # create cube to represent node
         for node in self.nodes_bvh.values():
-            nodes_ob.append(createCube(self.skeleton, node.name+"_head", node.world_head.xyz))
+            createCube(self.skeleton, self.name+"."+node.name+"_head", node.world_head.xyz)
             # is leaf
             if len(node.children) == 0:
-                nodes_ob.append(
-                    createCube(self.skeleton, node.name+"_tail", node.world_tail.xyz))
+                    createCube(self.skeleton, self.name+"."+node.name+"_tail", node.world_tail.xyz)
 
-        skeleton_ob = []
         # create mesh of line to represent skeleton
         for node in self.nodes_bvh.values():
-            skeleton_ob.append(
-                createLine(self.skeleton, node.name, node.world_head.xyz, node.world_tail.xyz))
+            createLine(self.skeleton, self.name+"."+node.name, node.world_head.xyz, node.world_tail.xyz)
 
-        return nodes_ob, skeleton_ob
-
-    def deleteKeyFrame(self):
-        self.has_animation = False
-
-        for frame_idx in range(self.frames_bvh):
-            for node in self.nodes_bvh.values():
-                ob = bpy.data.objects[node.name+"_head"]
-                ob.keyframe_delete(data_path="location", index=-1)
-                if len(node.children) == 0:
-                    ob = bpy.data.objects[node.name+"_tail"]
-                    ob.keyframe_delete(data_path="location", index=-1)
-
-                ob = bpy.data.objects[node.name]
-                ob.keyframe_delete(data_path="location", index=-1)
-                ob.keyframe_delete(data_path="rotation_quaternion", index=-1)
+        return
 
     #
-    def createPath(self):
-        self.path = createCollection(self.collection, self.name+".path")
-
-        self.init_motion                = self.createInitialMotionCurve()
-        self.init_path, self.new_path   = self.createPathCurve()
-        self.new_motion                 = self.createNewMotionCurve()
-
-
+    def updateKeyFrame(self):
+        self.deleteKeyFrame()
+        self.createKeyFrame()
     #
     def createKeyFrame(self):
+
+        # set key frame start and end
+        self.context.scene.frame_start = 0
+        self.context.scene.frame_end = self.frames_bvh - 1
+
+
         for frame_idx in range(self.frames_bvh):
             NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx, self.init_to_new_matrixs[frame_idx])
 
@@ -508,20 +500,20 @@ class MotionPathAnimation:
 
             for node in self.nodes_bvh.values():
                 # head
-                ob = bpy.data.objects[node.name+"_head"]
+                ob = self.skeleton.all_objects[self.name+"."+node.name+"_head"]
 
                 ob.location = (node.world_head.xyz)
                 ob.keyframe_insert(data_path="location", index=-1)
 
                 # is leaf
                 if len(node.children) == 0:
-                    ob = bpy.data.objects[node.name+"_tail"]
+                    ob = self.skeleton.all_objects[self.name+"."+node.name+"_tail"]
 
                     ob.location = (node.world_tail.xyz)
                     ob.keyframe_insert(data_path="location", index=-1)
 
                 # line of head_to_tail
-                ob = bpy.data.objects[node.name]
+                ob = self.skeleton.all_objects[self.name+"."+node.name]
                 me = ob.data
 
                 ob.location = (node.world_head.xyz)
@@ -532,11 +524,29 @@ class MotionPathAnimation:
                 ob.keyframe_insert(data_path="rotation_quaternion", index=-1)
 
     #
-    def updateKeyFrame(self):
-        self.deleteKeyFrame()
-        self.createKeyFrame()
+    def deleteKeyFrame(self):
+        self.has_animation = False
+
+        for frame_idx in range(self.frames_bvh):
+            for node in self.nodes_bvh.values():
+                ob = self.skeleton.all_objects[self.name+"."+node.name+"_head"]
+                ob.keyframe_delete(data_path="location", index=-1)
+                if len(node.children) == 0:
+                    ob = self.skeleton.all_objects[self.name+"."+node.name+"_tail"]
+                    ob.keyframe_delete(data_path="location", index=-1)
+
+                ob = self.skeleton.all_objects[self.name+"."+node.name]
+                ob.keyframe_delete(data_path="location", index=-1)
+                ob.keyframe_delete(data_path="rotation_quaternion", index=-1)
 
 
+    #
+    def createPath(self):
+        self.path = createCollection(self.collection, self.name+".path")
+
+        self.init_motion                = self.createInitialMotionCurve()
+        self.init_path, self.new_path   = self.createPathCurve()
+        self.new_motion                 = self.createNewMotionCurve()
     #
     def createInitialMotionCurve(self):
         curve = []
@@ -553,8 +563,6 @@ class MotionPathAnimation:
             curve.append((root.world_head))
 
         return createPolyCurve(self.context, self.path, "initial_motion", curve)
-
-
     # 
     def createPathCurve(self):
 
@@ -586,7 +594,53 @@ class MotionPathAnimation:
         return (
         createCubicBspline(self.context, self.path, c_points, "init_path", self.t),
         createCubicBspline(self.context, self.path, c_points, "new_path", self.t))
+    #
+    def createNewMotionCurve(self):
+        # use root to track curve
+        root = None
+        for node in self.nodes_bvh.values():
+            if node.parent is None:
+                root = node
+                break
+        
+        curve = []
 
+        self.init_to_new_matrixs = []
+        init_curve  = self.init_path.data.splines[0].points.values()
+        new_curve   = self.new_path.data.splines[0].points.values()
+        for i in range(self.frames_bvh):
+            p0  = init_curve[i].co
+            p   = new_curve[i].co
+
+            P0 = Matrix.Translation(p0)
+            P = Matrix.Translation(p)
+
+            def computeOrientation(front, world_up):
+                y = front.normalized().xyz
+                x = y.cross(world_up.xyz)
+                z = x.cross(y)
+                return Matrix((x, y, z)).transposed().to_4x4()
+
+            R0 = Matrix.Identity(4)
+            R = Matrix.Identity(4)
+            if (i > 0):
+                f0 = init_curve[i].co - init_curve[i-1].co
+                f = new_curve[i].co - new_curve[i-1].co
+                if f0.length > 0.001:
+                    R0 = computeOrientation(f0, Vector([0, 0, 1]))
+                if f.length > 0.001:
+                    R = computeOrientation(f, Vector([0, 0, 1]))
+                
+
+            matrix = P @ R @ R0.inverted() @ P0.inverted()
+
+            self.init_to_new_matrixs.append(matrix)
+            
+            NodeBVH.updateNodesWorldPosition(self.nodes_bvh, i, matrix)
+            curve.append((root.world_head))
+        
+        return createPolyCurve(self.context, self.path, "new_motion", curve)
+            
     #
     def updateNewPathAndMotionCurve(self):
 
@@ -616,35 +670,7 @@ class MotionPathAnimation:
 
         self.new_path = createCubicBspline(self.context, self.path, c_points, path_name, self.t)
         self.new_motion = self.createNewMotionCurve()
-    def createNewMotionCurve(self):
-        # use root to track curve
-        root = None
-        for node in self.nodes_bvh.values():
-            if node.parent is None:
-                root = node
-                break
-        
-        curve = []
-
-        self.init_to_new_matrixs = []
-        init_curve  = self.init_path.data.splines[0].points.values()
-        new_curve   = self.new_path.data.splines[0].points.values()
-        for i in range(self.frames_bvh):
-            p0  = init_curve[i].co
-            p   = new_curve[i].co
-
-            P0 = Matrix.Translation(p0)
-            P = Matrix.Translation(p)
-
-            matrix = P @ P0.inverted()
-
-            self.init_to_new_matrixs.append(matrix)
-            
-            NodeBVH.updateNodesWorldPosition(self.nodes_bvh, i, matrix)
-            curve.append((root.world_head))
-        
-        return createPolyCurve(self.context, self.path, "new_motion", curve)
-            
+    
 
 # create collection under parent collection
 # return:
@@ -653,12 +679,16 @@ class MotionPathAnimation:
 # parent_collection:    bpy.types.collection
 # collection_name:      str
 def createCollection(parent_collection, collection_name):
-    bpy.ops.collection.create(name=collection_name)
+    # bpy.ops.collection.create(name=collection_name)
+    bpy.data.collections.new(name=collection_name)
     coll = bpy.data.collections[collection_name]
     parent_collection.children.link(coll)
     return coll
 
-# node: NodeBVH
+# return
+# ob:   bpy.types.object
+# parameter
+# collection: this cube will create in this collection
 # name: str
 # position: Vector(x, y, z)
 def createCube(collection, name, position, scale = 1.0):
@@ -685,6 +715,11 @@ def createCube(collection, name, position, scale = 1.0):
 
     return ob
 
+# return
+# ob:   bpy.types.object
+# parameter
+# collection: this cube will create in this collection
+# name: str
 # head_pos: position of head is Vector(x, y, z)
 # tail_pos: position of tail is Vector(x, y, z)
 def createLine(collection, name, head_pos, tail_pos):
@@ -708,7 +743,12 @@ def createLine(collection, name, head_pos, tail_pos):
 
     return ob
 
-#
+# return
+# curve_ob:   bpy.types.object
+# parameter
+# collection: this cube will create in this collection
+# name: str
+# points:   list[Vector]
 def createPolyCurve(context, collection, name, points):
     # create the Curve Datablock
     curve_data = bpy.data.curves.new(name, type='CURVE')
