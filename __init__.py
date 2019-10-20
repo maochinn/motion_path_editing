@@ -112,7 +112,14 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
             property="select_collection_name",
             search_data=bpy.data,
             search_property="collections",
-            text="select animation")
+            text="animation")
+        row = layout.row()
+        row.prop_search(
+            data=context.scene,
+            property="select_object_name",
+            search_data=bpy.data,
+            search_property="objects",
+            text="camera obj")
 
         row = layout.row()
         row.operator('mao_animation.keyframe', text = "generate animation")
@@ -132,8 +139,10 @@ def register():
     # !!! regist this is important  !!!
     # create new variable "context.scene.select_animation"
     bpy.types.Scene.select_collection_name = bpy.props.StringProperty()
+    bpy.types.Scene.select_object_name = bpy.props.StringProperty()
 
     cameraFollow.register()
+    
 
 
 def unregister():
