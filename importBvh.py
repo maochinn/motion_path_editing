@@ -235,6 +235,9 @@ class MotionPathAnimation:
         
         return None
 
+    def setFrameScaler(self, scaler_factor):
+        self.interpolation_scaler = scaler_factor
+
     def __init__(self, context, axis=('X', 'Y', 'Z')):
         self.context = context
         self.init_to_new_matrixs = None
@@ -245,6 +248,8 @@ class MotionPathAnimation:
         self.t = []
         # re-parameter
         self.re_t = []
+
+        self.interpolation_scaler = 1
     # return:
     # nodes_bvh: dict[name:NodeBVH]
     # frames: int, number of frames
@@ -550,13 +555,13 @@ class MotionPathAnimation:
 
         # set key frame start and end
         self.context.scene.frame_start = 0
-        self.context.scene.frame_end = self.frames_bvh - 1
+        self.context.scene.frame_end = (self.frames_bvh - 1) * self.interpolation_scaler
 
         new_curve   = self.new_path.data.splines[0].points.values()
         for frame_idx in range(self.frames_bvh):
             NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx, self.init_to_new_matrixs[frame_idx])
 
-            self.context.scene.frame_set(frame_idx)
+            self.context.scene.frame_set(frame_idx * self.interpolation_scaler)
 
             for node in self.nodes_bvh.values():
                 # head
@@ -1020,7 +1025,7 @@ def solveCubicBspline(initial_curve):
     A[3][2] = A[2][3]
 
     # dimension mean is x, y, z
-    for dimension in range(0, 3):
+    for dimension in range(0, 2):
         b = Vector([0, 0, 0, 0])
         for i in range(0, n):
             b[0] += B3_0(t[i]) * Q[i][dimension]
@@ -1038,6 +1043,11 @@ def solveCubicBspline(initial_curve):
         p[1][dimension] = x[1]
         p[2][dimension] = x[2]
         p[3][dimension] = x[3]
+    
+    p[0][2] = 0
+    p[1][2] = 0
+    p[2][2] = 0
+    p[3][2] = 0
 
     return p, t
 

@@ -85,6 +85,8 @@ class MAOGenerateAnimation(Operator):
         path_animation = importBvh.MotionPathAnimation.GetPathAnimationByName(animation_name)
 
         if path_animation != None:
+            scaler_factor = 1 / bpy.context.scene.bvh_animation_time_scaler
+            path_animation.setFrameScaler(scaler_factor)
             path_animation.updateKeyFrame()
 
         return {'FINISHED'}
@@ -119,6 +121,9 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
             text="camera obj")
 
         row = layout.row()
+        row.prop(context.scene,"bvh_animation_time_scaler",text="Time Scale")
+
+        row = layout.row()
         row.operator('mao_animation.keyframe', text = "generate animation")
 
         footskateCleanup.draw(context, layout)
@@ -138,6 +143,7 @@ def register():
     # create new variable "context.scene.select_animation"
     bpy.types.Scene.select_collection_name = bpy.props.StringProperty()
     bpy.types.Scene.select_object_name = bpy.props.StringProperty()
+    bpy.types.Scene.bvh_animation_time_scaler = bpy.props.FloatProperty(default=1,min=0.05,max=10)
 
     cameraFollow.register()
     footskateCleanup.register()
@@ -151,6 +157,10 @@ def unregister():
 
     cameraFollow.unregister()
     footskateCleanup.unregister()
+
+    del bpy.types.Scene.select_collection_name
+    del bpy.types.Scene.select_object_name
+    del bpy.types.Scene.bvh_animation_time_scaler
 
 if __name__ == "__main__":
     register()

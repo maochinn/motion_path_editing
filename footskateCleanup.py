@@ -159,7 +159,7 @@ class ApplyFootskateCleanup(Operator):
         root = NodeBVH.getRoot(animation.nodes_bvh)
 
         for frame_idx in range(animation.frames_bvh):
-            animation.context.scene.frame_set(frame_idx)
+            animation.context.scene.frame_set(frame_idx * animation.interpolation_scaler)
 
             self.SolveFootNode(animation, left, frame_idx)
             self.SolveFootNode(animation, right, frame_idx)
@@ -231,7 +231,7 @@ class ApplyFootskateCleanup(Operator):
 
 def draw(context, layout):
     row = layout.row()
-    row.label(text="Footskate Cleanup")
+    row.label(text="Inverse Kinematics")
 
     row = layout.row()
     row.prop_search(
