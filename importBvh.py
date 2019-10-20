@@ -119,11 +119,8 @@ class NodeBVH:
         node.world_tail = node.model_mat @ Vector(node.local_tail - node.local_head)
        
 
-        if len(node.children) == 0:
-            return None
-        else:
-            for child in node.children:
-                cls.updateWorldPosition(child, node.model_mat, frame_idx)
+        for child in node.children:
+            cls.updateWorldPosition(child, node.model_mat, frame_idx)
           
         return None
 
@@ -188,6 +185,56 @@ class NodeBVH:
 # context: bpy.context
 # axis: dict, blender default:{(blender_axis:data_axis))}
 class MotionPathAnimation:
+    path_animations = []
+
+    @classmethod
+    def AddPathAnimation(cls, context, axis, filepath):
+        if cls.path_animations == None:
+            cls.path_animations = []
+
+        path_animation = MotionPathAnimation(context, axis)
+
+        if path_animation != None:
+            path_animation.load_bvh(filepath)
+
+            cls.path_animations.append(path_animation)
+        
+        return path_animation
+
+    @classmethod
+    def GetPathAnimations(cls):
+        return cls.path_animations
+
+    @classmethod
+    def GetPathAnimationByName(cls, name):
+        if cls.path_animations != None:
+            for animation in cls.path_animations:
+                if animation.collection_name == name:
+                    return animation
+        return None
+
+    @classmethod
+    def RemovePathAnimationByName(cls, name):
+        if cls.path_animations != None:
+            for animation in cls.path_animations:
+                if animation.collection_name == name:
+                    cls.path_animations.remove(animation)
+                    return True
+        
+        return False
+    
+    @classmethod
+    def ClearPathAnimation(cls):
+        cls.path_animations.clear()
+
+    def findNodeByName(self, nodeName):
+        if self.nodes_bvh:
+            for node in self.nodes_bvh.values():
+                if node.name == nodeName:
+                    return node
+        
+        return None
+
     def __init__(self, context, axis=('X', 'Y', 'Z')):
         self.context = context
         self.init_to_new_matrixs = None
@@ -214,6 +261,7 @@ class MotionPathAnimation:
 
         # create collection(or group) to collect object
         self.collection = createCollection(self.context.scene.collection, self.name)
+        self.collection_name = self.collection.name
 
         self.createSkeleton()
     
@@ -538,6 +586,7 @@ class MotionPathAnimation:
                 # is root
                 if bpy.context.scene.select_object_name == "":
                     bpy.context.scene.select_object_name = NodeBVH.getRoot(self.nodes_bvh).name
+
                 if node.name in bpy.context.scene.select_object_name:
                     if frame_idx > 0:
                         front = new_curve[frame_idx].co.xyz - new_curve[frame_idx-1].co.xyz

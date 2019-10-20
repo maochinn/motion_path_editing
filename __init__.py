@@ -20,11 +20,9 @@ from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
 
+from . import importBvh
 from . import cameraFollow
-
-# global
-path_animations = []
-
+from . import footskateCleanup
 
 class MAOImportBVH(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -60,16 +58,8 @@ class MAOImportBVH(Operator, ImportHelper):
             )
 
     def execute(self, context):
-        
-        from . import importBvh
-        
-        path_animation = importBvh.MotionPathAnimation(context, 
-        (self.axis[0], self.axis[1], self.axis[2]))
-        path_animation.load_bvh(self.filepath)
-
-        global path_animations
-        path_animations.append(path_animation)
-
+        path_animation = importBvh.MotionPathAnimation.AddPathAnimation(context, 
+        (self.axis[0], self.axis[1], self.axis[2]), self.filepath)
         return {'FINISHED'}
 
 class MAOGenerateAnimation(Operator):
@@ -80,18 +70,25 @@ class MAOGenerateAnimation(Operator):
     @classmethod
     def poll(cls, context):
         # path_animation is not empty
-        if path_animations:
-            for animation in path_animations:
-                if context.scene.select_collection_name == animation.collection.name:
-                    return True
-        return False        
+        animation_name = context.scene.select_collection_name
+
+        path_animation = importBvh.MotionPathAnimation.GetPathAnimationByName(animation_name)
+
+        if path_animation == None:
+            return False
+
+        return True
             
     def execute(self, context):
-        for animation in path_animations:
-            if context.scene.select_collection_name == animation.collection.name:
-                animation.updateKeyFrame()
-                return {'FINISHED'}
-        return {'PASS_THROUGH'}
+        animation_name = context.scene.select_collection_name
+
+        path_animation = importBvh.MotionPathAnimation.GetPathAnimationByName(animation_name)
+
+        if path_animation != None:
+            path_animation.updateKeyFrame()
+
+        return {'FINISHED'}
+        #return {'CANCELLED'}
 
 class MAOGenerateAnimationPanel(bpy.types.Panel):
     bl_idname = "MAO_PT_GENERATE_ANIMATION"
@@ -124,6 +121,7 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
         row = layout.row()
         row.operator('mao_animation.keyframe', text = "generate animation")
 
+        footskateCleanup.draw(context, layout)
         cameraFollow.draw(context, layout)
 
 # Only needed if you want to add into a dynamic menu
@@ -142,7 +140,7 @@ def register():
     bpy.types.Scene.select_object_name = bpy.props.StringProperty()
 
     cameraFollow.register()
-    
+    footskateCleanup.register()
 
 
 def unregister():
@@ -152,7 +150,7 @@ def unregister():
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
 
     cameraFollow.unregister()
-
+    footskateCleanup.unregister()
 
 if __name__ == "__main__":
     register()

@@ -18,38 +18,12 @@ class SmoothFollow(Operator):
 
     @classmethod
     def poll(cls, context):
-        if SmoothFollow.following:
-            return False
-
         objname = bpy.context.scene.select_collection_follow_target_name
         obj = bpy.data.objects.get(objname)
-
         return obj != None
 
-    def draw_callback(self, context):
-        pass
-
-    def modal(self, context, event):
-
-        if event.type == 'ESC':
-            self.exit()
-            return {'FINISHED'}
-            #return {'RUNNING_MODAL'}
-
-        return {'PASS_THROUGH'}
-
-    def invoke(self, context, event):
-
-        SmoothFollow.following = True
-        
-        self.areatype = bpy.types.SpaceView3D
-        self._handle = self.areatype.draw_handler_add(
-                                                self.draw_callback,
-                                                (context,),
-                                                'WINDOW', 'POST_VIEW'
-                                                )
-
-        context.window_manager.modal_handler_add(self)
+    def execute(self, context):
+        SmoothFollow.following = not SmoothFollow.following
 
         objname = bpy.context.scene.select_collection_follow_target_name
         obj = bpy.data.objects.get(objname)
@@ -62,34 +36,32 @@ class SmoothFollow(Operator):
         if self.trackTo == None:
             self.trackTo = self.camera.constraints.new(type='TRACK_TO')
             self.trackTo.name = 'TRACK_TO'
-        self.trackTo.target = self.target
-        self.trackTo.track_axis = 'TRACK_NEGATIVE_Z'
-        self.trackTo.up_axis = 'UP_Y'
-        self.trackTo.mute = False
 
         self.limitDistance = self.camera.constraints.get('LIMIT_DISTANCE')
         if self.limitDistance == None:
             self.limitDistance = self.camera.constraints.new(type='LIMIT_DISTANCE')
             self.limitDistance.name = 'LIMIT_DISTANCE'
 
-        self.limitDistance.target = self.target
-        self.limitDistance.distance = bpy.context.scene.follow_target_offset
-        self.limitDistance.mute = False
+        if SmoothFollow.following:
+            self.trackTo.target = self.target
+            self.trackTo.track_axis = 'TRACK_NEGATIVE_Z'
+            self.trackTo.up_axis = 'UP_Y'
+            self.trackTo.mute = False
 
-        return {'RUNNING_MODAL'}
+            self.limitDistance.target = self.target
+            self.limitDistance.distance = bpy.context.scene.follow_target_offset
+            self.limitDistance.mute = False
+        else:
+            self.trackTo.mute = True
+            self.limitDistance.mute = True
 
-    def exit(self):
-        SmoothFollow.following = False
-
-        self.trackTo.mute = True
-        self.limitDistance.mute = True
-
-        self.areatype.draw_handler_remove(self._handle, 'WINDOW') 
+        return {'FINISHED'}
 
 def draw(context, layout):
     row = layout.row()
 
     row.label(text="Camera Follow")
+    row = layout.row()
 
     row.prop_search(
         data=bpy.context.scene,
@@ -99,7 +71,7 @@ def draw(context, layout):
         text="Target")
 
     row = layout.row()
-    row.operator('view.smooth_follow', text = "Follow Target")
+    row.operator('view.smooth_follow', text = "Unfollow" if SmoothFollow.following else "Follow")
 
     row.prop(bpy.context.scene,"follow_target_offset",text="offset")
 
