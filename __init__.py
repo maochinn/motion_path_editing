@@ -20,6 +20,8 @@ from bpy_extras.io_utils import ImportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 from bpy.types import Operator
 
+from . import cameraFollow
+
 # global
 path_animations = []
 
@@ -115,6 +117,7 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
         row = layout.row()
         row.operator('mao_animation.keyframe', text = "generate animation")
 
+        cameraFollow.draw(context, layout)
 
 # Only needed if you want to add into a dynamic menu
 def menu_func_import(self, context):
@@ -129,7 +132,8 @@ def register():
     # !!! regist this is important  !!!
     # create new variable "context.scene.select_animation"
     bpy.types.Scene.select_collection_name = bpy.props.StringProperty()
-    
+
+    cameraFollow.register()
 
 
 def unregister():
@@ -137,6 +141,8 @@ def unregister():
     bpy.utils.unregister_class(MAOGenerateAnimation)
     bpy.utils.unregister_class(MAOGenerateAnimationPanel)
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+
+    cameraFollow.unregister()
 
 
 if __name__ == "__main__":
