@@ -250,6 +250,9 @@ class MotionPathAnimation:
         self.re_t = []
 
         self.interpolation_scaler = 1
+
+        self.animation_center = Vector()
+
     # return:
     # nodes_bvh: dict[name:NodeBVH]
     # frames: int, number of frames
@@ -552,10 +555,13 @@ class MotionPathAnimation:
         self.createKeyFrame()
     #
     def createKeyFrame(self):
+        self.animation_center = Vector()
 
         # set key frame start and end
         self.context.scene.frame_start = 0
         self.context.scene.frame_end = (self.frames_bvh - 1) * self.interpolation_scaler
+
+        root = NodeBVH.getRoot(self.nodes_bvh)
 
         new_curve   = self.new_path.data.splines[0].points.values()
         for frame_idx in range(self.frames_bvh):
@@ -590,27 +596,28 @@ class MotionPathAnimation:
 
                 # is root
                 if bpy.context.scene.select_object_name == "":
-                    bpy.context.scene.select_object_name = NodeBVH.getRoot(self.nodes_bvh).name
+                    bpy.context.scene.select_object_name = root.name
 
-                if node.name in bpy.context.scene.select_object_name:
-                    if frame_idx > 0:
-                        front = new_curve[frame_idx].co.xyz - new_curve[frame_idx-1].co.xyz
-                    else:
-                        front = new_curve[frame_idx+1].co.xyz - new_curve[frame_idx].co.xyz
+            if frame_idx > 0:
+                front = new_curve[frame_idx].co.xyz - new_curve[frame_idx-1].co.xyz
+            else:
+                front = new_curve[frame_idx+1].co.xyz - new_curve[frame_idx].co.xyz
 
-                    # default camera front direct is (0, 0, -1)
-                    # we default is (1, 0, 0), so rotate 90 degree by x-axis
-                    rotation = computeOrientation(front, Vector([0, 0, 1])) @ Matrix.Rotation(math.radians(90.0), 4, 'X')
+            self.animation_center += root.world_head.xyz
+            # default camera front direct is (0, 0, -1)
+            # we default is (1, 0, 0), so rotate 90 degree by x-axis
+            rotation = computeOrientation(front, Vector([0, 0, 1])) @ Matrix.Rotation(math.radians(90.0), 4, 'X')
 
+            offset = front.normalized() * 2.0
+            self.camera.location = (root.world_head.xyz + offset)
+            self.camera.keyframe_insert(data_path="location", index=-1)
 
-                    offset = front.normalized() * 2.0
-                    self.camera.location = (node.world_head.xyz + offset)
-                    self.camera.keyframe_insert(data_path="location", index=-1)
+            self.camera.rotation_mode = 'QUATERNION'
+            self.camera.rotation_quaternion = (rotation.to_quaternion())
+            self.camera.keyframe_insert(data_path="rotation_quaternion", index=-1)
 
-                    self.camera.rotation_mode = 'QUATERNION'
-                    self.camera.rotation_quaternion = (rotation.to_quaternion())
-                    self.camera.keyframe_insert(data_path="rotation_quaternion", index=-1)
-                    
+        if self.frames_bvh > 0:
+            self.animation_center /= self.frames_bvh
 
     #
     def deleteKeyFrame(self):

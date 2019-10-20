@@ -96,7 +96,10 @@ class ApplyFootskateCleanup(Operator):
         if ApplyFootskateCleanup.selected_animation != None:
             for node in ApplyFootskateCleanup.selected_animation.nodes_bvh.values():
                 items.append((node.name, node.name, node.name, node.index))
-                
+        
+        if len(items) == 0:
+            items.append(("None","None","None"))
+        
         return items
 
     left_foot = bpy.props.EnumProperty(name="LeftFootJoint", items = loadJoints)

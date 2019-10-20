@@ -143,7 +143,7 @@ def register():
     # create new variable "context.scene.select_animation"
     bpy.types.Scene.select_collection_name = bpy.props.StringProperty()
     bpy.types.Scene.select_object_name = bpy.props.StringProperty()
-    bpy.types.Scene.bvh_animation_time_scaler = bpy.props.FloatProperty(default=1,min=0.05,max=10)
+    bpy.types.Scene.bvh_animation_time_scaler = bpy.props.FloatProperty(default=1,min=0.001,max=10)
 
     cameraFollow.register()
     footskateCleanup.register()
