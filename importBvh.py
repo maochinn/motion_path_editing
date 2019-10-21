@@ -805,10 +805,14 @@ def createPyramid(collection, name, head_pos, tail_pos):
     y = z.cross(x)
     rotation = Matrix((x, y, z)).transposed()
     
+    width = up.length / 5.0
+    if width < 1.0:
+        width = 1.0
+
     transform_verts = []
 
     for v in verts:
-        transform_verts.append((rotation @ Vector([v[0], v[1], up.length * v[2]])))
+        transform_verts.append((rotation @ Vector([width * v[0], width * v[1], up.length * v[2]])))
 
     me.from_pydata(transform_verts, [], faces)
     me.update(calc_edges = True)
