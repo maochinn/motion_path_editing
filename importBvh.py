@@ -119,11 +119,8 @@ class NodeBVH:
         node.world_tail = node.model_mat @ Vector(node.local_tail - node.local_head)
        
 
-        if len(node.children) == 0:
-            return None
-        else:
-            for child in node.children:
-                cls.updateWorldPosition(child, node.model_mat, frame_idx)
+        for child in node.children:
+            cls.updateWorldPosition(child, node.model_mat, frame_idx)
           
         return None
 
@@ -188,6 +185,59 @@ class NodeBVH:
 # context: bpy.context
 # axis: dict, blender default:{(blender_axis:data_axis))}
 class MotionPathAnimation:
+    path_animations = []
+
+    @classmethod
+    def AddPathAnimation(cls, context, axis, filepath):
+        if cls.path_animations == None:
+            cls.path_animations = []
+
+        path_animation = MotionPathAnimation(context, axis)
+
+        if path_animation != None:
+            path_animation.load_bvh(filepath)
+
+            cls.path_animations.append(path_animation)
+        
+        return path_animation
+
+    @classmethod
+    def GetPathAnimations(cls):
+        return cls.path_animations
+
+    @classmethod
+    def GetPathAnimationByName(cls, name):
+        if cls.path_animations != None:
+            for animation in cls.path_animations:
+                if animation.collection_name == name:
+                    return animation
+        return None
+
+    @classmethod
+    def RemovePathAnimationByName(cls, name):
+        if cls.path_animations != None:
+            for animation in cls.path_animations:
+                if animation.collection_name == name:
+                    cls.path_animations.remove(animation)
+                    return True
+        
+        return False
+    
+    @classmethod
+    def ClearPathAnimation(cls):
+        cls.path_animations.clear()
+
+    def findNodeByName(self, nodeName):
+        if self.nodes_bvh:
+            for node in self.nodes_bvh.values():
+                if node.name == nodeName:
+                    return node
+        
+        return None
+
+    def setFrameScaler(self, scaler_factor):
+        self.interpolation_scaler = scaler_factor
+
     def __init__(self, context, axis=('X', 'Y', 'Z')):
         self.context = context
         self.init_to_new_matrixs = None
@@ -198,6 +248,11 @@ class MotionPathAnimation:
         self.t = []
         # re-parameter
         self.re_t = []
+
+        self.interpolation_scaler = 1
+
+        self.animation_center = Vector()
+
     # return:
     # nodes_bvh: dict[name:NodeBVH]
     # frames: int, number of frames
@@ -214,6 +269,7 @@ class MotionPathAnimation:
 
         # create collection(or group) to collect object
         self.collection = createCollection(self.context.scene.collection, self.name)
+        self.collection_name = self.collection.name
 
         self.createSkeleton()
     
@@ -499,16 +555,19 @@ class MotionPathAnimation:
         self.createKeyFrame()
     #
     def createKeyFrame(self):
+        self.animation_center = Vector()
 
         # set key frame start and end
         self.context.scene.frame_start = 0
-        self.context.scene.frame_end = self.frames_bvh - 1
+        self.context.scene.frame_end = (self.frames_bvh - 1) * self.interpolation_scaler
+
+        root = NodeBVH.getRoot(self.nodes_bvh)
 
         new_curve   = self.new_path.data.splines[0].points.values()
         for frame_idx in range(self.frames_bvh):
             NodeBVH.updateNodesWorldPosition(self.nodes_bvh, frame_idx, self.init_to_new_matrixs[frame_idx])
 
-            self.context.scene.frame_set(frame_idx)
+            self.context.scene.frame_set(frame_idx * self.interpolation_scaler)
 
             for node in self.nodes_bvh.values():
                 # head
@@ -537,26 +596,28 @@ class MotionPathAnimation:
 
                 # is root
                 if bpy.context.scene.select_object_name == "":
-                    bpy.context.scene.select_object_name = NodeBVH.getRoot(self.nodes_bvh).name
-                if node.name in bpy.context.scene.select_object_name:
-                    if frame_idx > 0:
-                        front = new_curve[frame_idx].co.xyz - new_curve[frame_idx-1].co.xyz
-                    else:
-                        front = new_curve[frame_idx+1].co.xyz - new_curve[frame_idx].co.xyz
+                    bpy.context.scene.select_object_name = root.name
 
-                    # default camera front direct is (0, 0, -1)
-                    # we default is (1, 0, 0), so rotate 90 degree by x-axis
-                    rotation = computeOrientation(front, Vector([0, 0, 1])) @ Matrix.Rotation(math.radians(90.0), 4, 'X')
+            if frame_idx > 0:
+                front = new_curve[frame_idx].co.xyz - new_curve[frame_idx-1].co.xyz
+            else:
+                front = new_curve[frame_idx+1].co.xyz - new_curve[frame_idx].co.xyz
 
+            self.animation_center += root.world_head.xyz
+            # default camera front direct is (0, 0, -1)
+            # we default is (1, 0, 0), so rotate 90 degree by x-axis
+            rotation = computeOrientation(front, Vector([0, 0, 1])) @ Matrix.Rotation(math.radians(90.0), 4, 'X')
 
-                    offset = front.normalized() * 2.0
-                    self.camera.location = (node.world_head.xyz + offset)
-                    self.camera.keyframe_insert(data_path="location", index=-1)
+            offset = front.normalized() * 2.0
+            self.camera.location = (root.world_head.xyz + offset)
+            self.camera.keyframe_insert(data_path="location", index=-1)
 
-                    self.camera.rotation_mode = 'QUATERNION'
-                    self.camera.rotation_quaternion = (rotation.to_quaternion())
-                    self.camera.keyframe_insert(data_path="rotation_quaternion", index=-1)
-                    
+            self.camera.rotation_mode = 'QUATERNION'
+            self.camera.rotation_quaternion = (rotation.to_quaternion())
+            self.camera.keyframe_insert(data_path="rotation_quaternion", index=-1)
+
+        if self.frames_bvh > 0:
+            self.animation_center /= self.frames_bvh
 
     #
     def deleteKeyFrame(self):
@@ -975,7 +1036,7 @@ def solveCubicBspline(initial_curve):
     A[3][2] = A[2][3]
 
     # dimension mean is x, y, z
-    for dimension in range(0, 3):
+    for dimension in range(0, 2):
         b = Vector([0, 0, 0, 0])
         for i in range(0, n):
             b[0] += B3_0(t[i]) * Q[i][dimension]
@@ -993,6 +1054,11 @@ def solveCubicBspline(initial_curve):
         p[1][dimension] = x[1]
         p[2][dimension] = x[2]
         p[3][dimension] = x[3]
+    
+    p[0][2] = 0
+    p[1][2] = 0
+    p[2][2] = 0
+    p[3][2] = 0
 
     return p, t
 
