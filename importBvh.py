@@ -3,10 +3,11 @@ modify from import_bvh.py
 """
 
 import bpy
-import bmesh
 import math
 import os
 from mathutils import Vector, Euler, Matrix
+
+from .createBlenderThing import createCollection, createCamera, createCube, createLine, createPyramid, createPolyCurve
 
 # axis and index relationship
 axis_idx = {
@@ -89,6 +90,13 @@ class NodeBVH:
     def hasRotation(self):
         return len(self.rotation_idx) != 0
 
+    def getAnimData(self, frame_idx):
+        idx = 0
+        if frame_idx + 1 < len(self.anim_data):
+            idx = frame_idx + 1
+        return self.anim_data[idx]
+
+
     # return:
     # mat:  Matrix, is local to world matrix
     # frame_idx: int, index of animation frame
@@ -97,19 +105,14 @@ class NodeBVH:
     def updateWorldPosition(cls, node, parent_matrix, frame_idx):
         # compute model matrix
         # default idx is zero, self.anim_data[0] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-        idx = 0
-        if frame_idx + 1 < len(node.anim_data):
-            idx = frame_idx + 1
+        node_data = node.getAnimData(frame_idx)
 
         offset = Matrix.Translation(node.local_head)
-        translation = Matrix.Translation((node.anim_data[idx][0:3]))
+        translation = Matrix.Translation((node_data[0:3]))
 
-        
-
-        rotation_X = Matrix.Rotation(math.radians(node.anim_data[idx][3]), 4, 'X')
-        rotation_Y = Matrix.Rotation(math.radians(node.anim_data[idx][4]), 4, 'Y')
-        rotation_Z = Matrix.Rotation(math.radians(node.anim_data[idx][5]), 4, 'Z')
-
+        rotation_X = Matrix.Rotation(math.radians(node_data[3]), 4, 'X')
+        rotation_Y = Matrix.Rotation(math.radians(node_data[4]), 4, 'Y')
+        rotation_Z = Matrix.Rotation(math.radians(node_data[5]), 4, 'Z')
 
 
         rotation = Matrix.Identity(4)
@@ -148,6 +151,7 @@ class NodeBVH:
 
     @staticmethod
     def getRoot(nodes_bvh):
+        # find first root
         for node in nodes_bvh.values():
             if node.parent is None:
                 return node
@@ -779,13 +783,18 @@ class MotionPathAnimation:
 
             R0 = Matrix.Identity(4)
             R = Matrix.Identity(4)
-            if (i > 0):
+            if (i == 0):
+                f0 = init_curve[i+1].co - init_curve[i].co
+                f = new_curve[i+1].co - new_curve[i].co
+            else:
                 f0 = init_curve[i].co - init_curve[i-1].co
                 f = new_curve[i].co - new_curve[i-1].co
-                if f0.length > 0.001:
-                    R0 = computeOrientation(f0, Vector([0, 0, 1]))
-                if f.length > 0.001:
-                    R = computeOrientation(f, Vector([0, 0, 1]))
+                
+            if f0.length > 0.001:
+                R0 = computeOrientation(f0, Vector([0, 0, 1]))
+            if f.length > 0.001:
+                R = computeOrientation(f, Vector([0, 0, 1]))
+            
                 
 
             matrix = P @ R @ R0.inverted() @ P0.inverted()
@@ -849,162 +858,6 @@ class MotionPathAnimation:
         bpy.data.objects.remove(self.new_motion)
         self.new_motion = self.createNewMotionCurve()
     
-
-# create collection under parent collection
-# return:
-# coll: bpy.types.collection, created collection
-# parameter:
-# parent_collection:    bpy.types.collection
-# collection_name:      str
-def createCollection(parent_collection, collection_name):
-    # bpy.ops.collection.create(name=collection_name)
-    bpy.data.collections.new(name=collection_name)
-    coll = bpy.data.collections[collection_name]
-    parent_collection.children.link(coll)
-    return coll
-
-def createCamera(collection, name, position):
-    cam = bpy.data.cameras.new(name)
-    cam.clip_end = 99999
-    cam_ob = bpy.data.objects.new(name, cam)
-    cam_ob.location = position
-    collection.objects.link(cam_ob)
-
-    return cam_ob
-
-
-# return
-# ob:   bpy.types.object
-# parameter
-# collection: this cube will create in this collection
-# name: str
-# position: Vector(x, y, z)
-def createCube(collection, name, position, scale = 1.0):
-
-    me = bpy.data.meshes.new(name)
-    ob = bpy.data.objects.new(name, me)
-    ob.location = position
-    collection.objects.link(ob)
-
-    verts = [
-        (-0.5, -0.5, -0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (0.5, -0.5, -0.5),
-        (-0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (0.5, -0.5, 0.5)]
-    faces = [
-        (0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
-        (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)]
-
-    scale_verts = []
-    for v in verts:
-        scale_verts.append((scale * v[0], scale * v[1], scale * v[2]))
-
-
-    me.from_pydata(scale_verts, [], faces)
-    me.update(calc_edges = True)
-
-    return ob
-
-# return
-# ob:   bpy.types.object
-# parameter
-# collection: this cube will create in this collection
-# name: str
-# head_pos: position of head is Vector(x, y, z)
-# tail_pos: position of tail is Vector(x, y, z)
-def createLine(collection, name, head_pos, tail_pos):
-
-    me = bpy.data.meshes.new(name)
-    ob = bpy.data.objects.new(name, me)
-    ob.location = head_pos
-    collection.objects.link(ob)
-
-    bm = bmesh.new()   # create an empty BMesh
-    bm.from_mesh(me)   # fill it in from a Mesh
-
-    head = bm.verts.new((0.0, 0.0, 0.0))
-    tail = bm.verts.new((tail_pos - head_pos))
-    bm.edges.new((head, tail))
-
-    bm.to_mesh(me)
-    bm.free()  # free and prevent further access
-
-    me.update(calc_edges = True)
-
-    return ob
-#   .   -
-#  /|\  1
-# /_|_\ -
-#|--1--|
-def createPyramid(collection, name, head_pos, tail_pos):
-    
-    me = bpy.data.meshes.new(name)
-    ob = bpy.data.objects.new(name, me)
-    ob.location = head_pos
-    collection.objects.link(ob)
-
-    verts = [
-        (-0.5, -0.5, 0), (0.5, -0.5, 0), (0.5, 0.5, 0), (-0.5, 0.5, 0), (0, 0, 1)]
-    faces = [
-        (3, 2, 1, 0), (0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)]
-
-    up = tail_pos - head_pos
-    world_front = Vector([0, 1, 0])
-
-    z = up.normalized().xyz
-    x = world_front.cross(z.xyz)
-    y = z.cross(x)
-    rotation = Matrix((x, y, z)).transposed()
-    
-    width = up.length / 5.0
-    if width < 1.0:
-        width = 1.0
-
-    transform_verts = []
-
-    for v in verts:
-        transform_verts.append((rotation @ Vector([width * v[0], width * v[1], up.length * v[2]])))
-
-    me.from_pydata(transform_verts, [], faces)
-    me.update(calc_edges = True)
-
-    return ob
-
-
-
-# return
-# curve_ob:   bpy.types.object
-# parameter
-# collection: this cube will create in this collection
-# name: str
-# points:   list[Vector]
-def createPolyCurve(context, collection, name, points):
-    # create the Curve Datablock
-    curve_data = bpy.data.curves.new(name, type='CURVE')
-    curve_data.dimensions = '3D'
-    #curveData.resolution_u = 3
-
-    # map coords to spline
-    polyline = curve_data.splines.new('POLY')  
-    polyline.points.add(len(points)-1)  
-
-    for i, point in enumerate(points):
-        x,y,z = point
-        polyline.points[i].co = (x, y, z, 1)
-    
-    # create Object
-    curve_ob = bpy.data.objects.new(name, curve_data)
-    curve_data.bevel_depth = 0.01
-
-    # attach to scene and validate context
-    collection.objects.link(curve_ob)
-    context.view_layer.objects.active = curve_ob
-
-    return curve_ob
-
-# return
-# b_point:  Vecotr
-# parameter
-# t:        float, parameter[0, 1]
-# c_points: list[Vecotr], 4 control point
 
 def cubicBspline(t, c_points):
     # Monomial Bases
