@@ -81,19 +81,51 @@ class ConcatenateMotions(Operator):
                 root.anim_data[i][j] += concatenate_offset[j]
 
         # smooth
-        # for node in a0.nodes_bvh.values():
-        #     self.smooth(node.anim_data, concatenate_frame-1, 30)
+        for node in a0.nodes_bvh.values():
+            self.smooth(node, node.anim_data, concatenate_frame-1, 30)
 
-    def smooth(self, data, frame_concatenate, smooth_window):
+    def smooth(self, node, data, frame_concatenate, smooth_window):
+        
+        # order = ""
+        # start = min(node.rotation_idx.values())
+        # for i in range(start, start+3):
+        #     if node.rotation_idx['X'] == i:
+        #         order += "X"
+        #     elif node.rotation_idx['Y'] == i:
+        #         order += "Y"
+        #     elif node.rotation_idx['Z'] == i:
+        #         order += "Z"
+
+        # rot0 = NodeBVH.getRotation(node, frame_concatenate).to_quaternion()
+        # rot1 = NodeBVH.getRotation(node, frame_concatenate+1).to_quaternion()
+
+        # rot_diff = rot1.rotation_difference(rot0)
+
         frame_count = len(data)
         for s in range(-smooth_window, smooth_window+1):
             currentFrame = frame_concatenate + s
             if currentFrame > 0 and currentFrame < frame_count:
                 data_idx = currentFrame + 1
 
-                for i in range(6):
-                    diff = data[frame_concatenate+1][i] - data[frame_concatenate][i]
-                    data[data_idx][i] = data[data_idx][i] + diff * self.smooth_y(currentFrame, frame_concatenate, smooth_window)
+                # rot = NodeBVH.getRotation(node, data_idx).to_quaternion()
+
+                # factor = self.smooth_y(currentFrame, frame_concatenate, smooth_window)
+                # if factor < 0:
+                #     rot_diff.invert()
+
+                # rot = rot.slerp(rot @ rot_diff, abs(factor))
+
+                # euler = rot.to_euler(order, Euler((data[data_idx][3],data[data_idx][4],data[data_idx][5]),order))
+
+                # data[data_idx][3] = euler[0]
+                # data[data_idx][4] = euler[1]
+                # data[data_idx][5] = euler[2]
+
+                factor = self.smooth_y(currentFrame, frame_concatenate, smooth_window)
+                for i in (3,4,5):
+                    diff = (data[frame_concatenate+1][i] - data[frame_concatenate][i])
+                    data[data_idx][i] = data[data_idx][i] + diff * factor
+
     
     def smooth_y(self, f, d, s):
         res = 0
@@ -104,7 +136,7 @@ class ConcatenateMotions(Operator):
         if abs(diff) > s:
             res = 0
 
-        elif diff > 0:
+        elif f < d:
             res = 0.5 * diff_norm * diff_norm
 
         else:

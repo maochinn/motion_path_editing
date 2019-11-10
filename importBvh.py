@@ -96,19 +96,9 @@ class NodeBVH:
             idx = frame_idx + 1
         return self.anim_data[idx]
 
-
-    # return:
-    # mat:  Matrix, is local to world matrix
-    # frame_idx: int, index of animation frame
-    # parent_matrix: Matrix, matrix of parent
     @classmethod
-    def updateWorldPosition(cls, node, parent_matrix, frame_idx):
-        # compute model matrix
-        # default idx is zero, self.anim_data[0] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    def getRotation(cls, node, frame_idx):
         node_data = node.getAnimData(frame_idx)
-
-        offset = Matrix.Translation(node.local_head)
-        translation = Matrix.Translation((node_data[0:3]))
 
         rotation_X = Matrix.Rotation(math.radians(node_data[3]), 4, 'X')
         rotation_Y = Matrix.Rotation(math.radians(node_data[4]), 4, 'Y')
@@ -125,6 +115,23 @@ class NodeBVH:
                 rotation = rotation @ rotation_Y
             elif node.rotation_idx['Z'] == i:
                 rotation = rotation @ rotation_Z
+
+        return rotation
+        
+    # return:
+    # mat:  Matrix, is local to world matrix
+    # frame_idx: int, index of animation frame
+    # parent_matrix: Matrix, matrix of parent
+    @classmethod
+    def updateWorldPosition(cls, node, parent_matrix, frame_idx):
+        # compute model matrix
+        # default idx is zero, self.anim_data[0] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        node_data = node.getAnimData(frame_idx)
+
+        offset = Matrix.Translation(node.local_head)
+        translation = Matrix.Translation((node_data[0:3]))
+
+        rotation = NodeBVH.getRotation(node, frame_idx)
         
         mat = offset @ translation @ rotation
 
