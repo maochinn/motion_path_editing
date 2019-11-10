@@ -48,7 +48,7 @@ class ConcatenateMotions(Operator):
         # rename
         path_animation.name = path_animation0.name + "$" + path_animation1.name
         # update new animation length
-        path_animation.frames_bvh = path_animation0.frames_bvh + path_animation1.frames_bvh
+        path_animation.frames_bvh = path_animation0.frames_bvh + path_animation1.frames_bvh - 1
         # create skeleton, calculate path and path edit event
         path_animation.init_animation_object()
 
@@ -62,7 +62,7 @@ class ConcatenateMotions(Operator):
         # append animation data
         for node0 in a0.nodes_bvh.values():
             node1 = a1.nodes_bvh[node0.name]
-            for i in range(1, len(node1.anim_data)):
+            for i in range(2, len(node1.anim_data)):
                 data = node1.anim_data[i]
                 node0.anim_data.append([data[0], data[1], data[2], data[3], data[4], data[5]])
             
@@ -91,7 +91,7 @@ class ConcatenateMotions(Operator):
             if currentFrame > 0 and currentFrame < frame_count:
                 data_idx = currentFrame + 1
 
-                for i in (3,4,5):
+                for i in range(6):
                     diff = data[frame_concatenate+1][i] - data[frame_concatenate][i]
                     data[data_idx][i] = data[data_idx][i] + diff * self.smooth_y(currentFrame, frame_concatenate, smooth_window)
     
