@@ -69,6 +69,19 @@ class NodeBVH:
         # List of 6 length tuples: (lx, ly, lz, rx, ry, rz)
         # even if the channels aren't used they will just be zero.
         self.anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+    
+    def copy(self):
+        node = NodeBVH(self.name, self.local_head.copy(), self.world_head.copy(), 
+                        None, self.position_idx, self.rotation_idx, self.index)
+        
+        node.local_tail = self.local_tail.copy()
+        node.world_tail = self.world_tail.copy()
+
+        node.anim_data = []
+        for data in self.anim_data:
+            node.anim_data.append([data[0], data[1], data[2], data[3], data[4], data[5]])
+
+        return node
 
     def hasLocation(self):
         return len(self.position_idx) != 0
@@ -82,7 +95,6 @@ class NodeBVH:
     # parent_matrix: Matrix, matrix of parent
     @classmethod
     def updateWorldPosition(cls, node, parent_matrix, frame_idx):
-
         # compute model matrix
         # default idx is zero, self.anim_data[0] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         idx = 0
@@ -141,6 +153,26 @@ class NodeBVH:
                 return node
         return None
 
+    @staticmethod
+    def compareSkeleton(nodes_bvh0, nodes_bvh1):
+        def compareNodeEqual(n0, n1):
+            for c0 in n0.children:
+                for c1 in n1.children:
+                    if c0.name == c1.name:
+                        if not compareNodeEqual(c0, c1):
+                            return False
+                        break
+            return True
+
+        r0 = NodeBVH.getRoot(nodes_bvh0)
+        r1 = NodeBVH.getRoot(nodes_bvh1)
+
+        return compareNodeEqual(r0, r1)
+        
+                    
+
+
+
 # data structure in outliner of blender
 # name.bvh              (bpy.types.collection)
 # +---camera
@@ -188,7 +220,7 @@ class MotionPathAnimation:
     path_animations = []
 
     @classmethod
-    def AddPathAnimation(cls, context, axis, filepath):
+    def AddPathAnimationFromFile(cls, context, axis, filepath):
         if cls.path_animations == None:
             cls.path_animations = []
 
@@ -198,6 +230,15 @@ class MotionPathAnimation:
             path_animation.load_bvh(filepath)
 
             cls.path_animations.append(path_animation)
+        
+        return path_animation
+
+    @classmethod
+    def AddPathAnimation(cls, path_animation):
+        if cls.path_animations == None:
+            cls.path_animations = []
+
+        cls.path_animations.append(path_animation)
         
         return path_animation
 
@@ -241,6 +282,8 @@ class MotionPathAnimation:
     def __init__(self, context, axis=('X', 'Y', 'Z')):
         self.context = context
         self.init_to_new_matrixs = None
+
+        self.axis = axis
         self.axis_b2d = {'X':axis[0], 'Y':axis[1], 'Z':axis[2]}
         self.axis_d2b = {axis[0]:'X', axis[1]:'Y', axis[2]:'Z'}
 
@@ -252,6 +295,41 @@ class MotionPathAnimation:
         self.interpolation_scaler = 1
 
         self.animation_center = Vector()
+
+        self.collection = None
+
+        self.nodes_bvh = None
+        self.frames_bvh = None
+        self.frame_time_bvh = None
+
+        self.skeleton_data = None
+
+    def copy(self):
+        path_animation = MotionPathAnimation(self.context, self.axis)
+
+        path_animation.frames_bvh     = self.frames_bvh    
+        path_animation.frame_time_bvh = self.frame_time_bvh
+
+        path_animation.skeleton_data = self.skeleton_data
+
+        # copy nodes
+        path_animation.nodes_bvh = {}
+        for node in self.nodes_bvh.values():
+            path_animation.nodes_bvh[node.name] = node.copy()
+
+        # remap nodes' child & parent node
+        for node in self.nodes_bvh.values():
+            copyNode = path_animation.nodes_bvh[node.name]
+
+            copyNode.children = []
+            for c in node.children:
+                copyNode.children.append(path_animation.nodes_bvh[c.name])
+
+            copyNode.parent = None
+            if node.parent != None:
+                copyNode.parent = path_animation.nodes_bvh[node.parent.name]
+
+        return path_animation
 
     # return:
     # nodes_bvh: dict[name:NodeBVH]
@@ -267,13 +345,6 @@ class MotionPathAnimation:
         base = os.path.basename(file_path)
         self.name = os.path.splitext(base)[0]
 
-        # create collection(or group) to collect object
-        self.collection = createCollection(self.context.scene.collection, self.name)
-        self.collection_name = self.collection.name
-
-        self.createSkeleton()
-    
-
         if self.frame_time_bvh is None:
             # default is 1 sec
             frame_time_bvh = 1
@@ -288,29 +359,41 @@ class MotionPathAnimation:
         else:
             self.readKeyFrameBVH(self.file_path)
 
-            self.createPath()
-            root = NodeBVH.getRoot(self.nodes_bvh)
-            self.camera = createCamera(self.collection, self.name+".camera", root.world_head)
-            # create initial key frame animation
-            self.createKeyFrame()
+            self.init_animation_object()
+    
+    # call once to create skeleton and path edit event
+    def init_animation_object(self):
+        if self.collection != None:
+            return
+        # create collection(or group) to collect object
+        self.collection = createCollection(self.context.scene.collection, self.name)
+        self.collection_name = self.collection.name
 
-            # register handler to trigger event
-            from bpy.app.handlers import persistent
+        self.createSkeleton()
 
-            @persistent
-            def change_cotrol_point_handler(scene):
-                for ob in self.context.selected_objects:
-                    # is control point
-                    # if ob.name in {point.name for point in self.path_c_points_ob}:
-                    if ob.users_collection[0] is self.control_points:
-                        # update bspline
-                        self.updateNewPathAndMotionCurve()
-                        break
-            
-            # clear handler, if only one animation you can enable this!
-            # bpy.app.handlers.depsgraph_update_pre.clear()
+        self.createPath()
+        root = NodeBVH.getRoot(self.nodes_bvh)
+        self.camera = createCamera(self.collection, self.name+".camera", root.world_head)
+        # create initial key frame animation
+        self.createKeyFrame()
 
-            bpy.app.handlers.depsgraph_update_pre.append(change_cotrol_point_handler)
+        # register handler to trigger event
+        from bpy.app.handlers import persistent
+
+        @persistent
+        def change_cotrol_point_handler(scene):
+            for ob in self.context.selected_objects:
+                # is control point
+                # if ob.name in {point.name for point in self.path_c_points_ob}:
+                if ob.users_collection[0] is self.control_points:
+                    # update bspline
+                    self.updateNewPathAndMotionCurve()
+                    break
+        
+        # clear handler, if only one animation you can enable this!
+        # bpy.app.handlers.depsgraph_update_pre.clear()
+
+        bpy.app.handlers.depsgraph_update_pre.append(change_cotrol_point_handler)
                     
         return {'FINISHED'}
 
@@ -528,27 +611,32 @@ class MotionPathAnimation:
                     line_idx += len(node.position_idx)
                     line_idx += len(node.rotation_idx)
                     
-                    node.anim_data.append(tuple(data))
+                    node.anim_data.append(list(data))
 
 
     #
     def createSkeleton(self):
+        if self.skeleton_data == None:
+            self.skeleton_data = {}
+
+            for node in self.nodes_bvh.values():
+                self.skeleton_data[node.name] = (node.world_head.copy(), node.world_tail.copy())
+
         self.skeleton = createCollection(self.collection, self.name+".skeleton")
         
         # create cube to represent node
-        for node in self.nodes_bvh.values():
-            createCube(self.skeleton, self.name+"."+node.name+"_head", node.world_head.xyz)
+        for nodeName, head_tail_data in self.skeleton_data.items():
+            createCube(self.skeleton, self.name+"."+nodeName+"_head", head_tail_data[0].xyz)
             # is leaf
-            if len(node.children) == 0:
-                    createCube(self.skeleton, self.name+"."+node.name+"_tail", node.world_tail.xyz)
+            if len(self.nodes_bvh[nodeName].children) == 0:
+                    createCube(self.skeleton, self.name+"."+nodeName+"_tail", head_tail_data[1].xyz)
 
         # create mesh of line to represent skeleton
-        for node in self.nodes_bvh.values():
+        for nodeName, head_tail_data in self.skeleton_data.items():
             #createLine(self.skeleton, self.name+"."+node.name, node.world_head.xyz, node.world_tail.xyz)
-            createPyramid(self.skeleton, self.name+"."+node.name, node.world_head.xyz, node.world_tail.xyz)
+            createPyramid(self.skeleton, self.name+"."+nodeName, head_tail_data[0].xyz, head_tail_data[1].xyz)
 
         return
-
     #
     def updateKeyFrame(self):
         self.deleteKeyFrame()

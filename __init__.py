@@ -23,6 +23,7 @@ from bpy.types import Operator
 from . import importBvh
 from . import cameraFollow
 from . import footskateCleanup
+from . import concatenateMotions
 
 class MAOImportBVH(Operator, ImportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -58,7 +59,7 @@ class MAOImportBVH(Operator, ImportHelper):
             )
 
     def execute(self, context):
-        path_animation = importBvh.MotionPathAnimation.AddPathAnimation(context, 
+        path_animation = importBvh.MotionPathAnimation.AddPathAnimationFromFile(context, 
         (self.axis[0], self.axis[1], self.axis[2]), self.filepath)
         return {'FINISHED'}
 
@@ -127,7 +128,8 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
         row.operator('mao_animation.keyframe', text = "generate animation")
 
         footskateCleanup.draw(context, layout)
-        cameraFollow.draw(context, layout)
+        #cameraFollow.draw(context, layout)
+        concatenateMotions.draw(context, layout)
 
 # Only needed if you want to add into a dynamic menu
 def menu_func_import(self, context):
@@ -147,6 +149,7 @@ def register():
 
     cameraFollow.register()
     footskateCleanup.register()
+    concatenateMotions.register()
 
 
 def unregister():
@@ -157,6 +160,7 @@ def unregister():
 
     cameraFollow.unregister()
     footskateCleanup.unregister()
+    concatenateMotions.unregister()
 
     del bpy.types.Scene.select_collection_name
     del bpy.types.Scene.select_object_name
