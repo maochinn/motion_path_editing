@@ -103,7 +103,7 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
     
     def draw(self, context):
         layout = self.layout
-        scene = context.scene               
+        # scene = context.scene               
 
         row = layout.row()
         # select collection will assign to context.scene.select_animation
@@ -134,16 +134,20 @@ class MAOGenerateAnimationPanel(bpy.types.Panel):
             property="select_motion_1_name",
             search_data=bpy.data,
             search_property="collections",
-            text="animation 1")
+            text="motion 1")
         row = layout.row()
         row.prop_search(
             data=context.scene,
             property="select_motion_2_name",
             search_data=bpy.data,
             search_property="collections",
-            text="animation 2")
+            text="motion 2")
+        row = layout.row()
+        row.prop(context.scene,"bvh_motion_1_weight",text="motion 1 w")
+        
         row = layout.row()
         row.operator('mao_animation.registration_curve', text = "generate registration curve")
+        
 
         footskateCleanup.draw(context, layout)
         #cameraFollow.draw(context, layout)
@@ -199,6 +203,7 @@ def register():
     bpy.types.Scene.select_object_name = bpy.props.StringProperty()
     bpy.types.Scene.select_motion_1_name = bpy.props.StringProperty()
     bpy.types.Scene.select_motion_2_name = bpy.props.StringProperty()
+    bpy.types.Scene.bvh_motion_1_weight = bpy.props.FloatProperty(default=0.5,min=0.0,max=1.0)
     bpy.types.Scene.bvh_animation_time_scaler = bpy.props.FloatProperty(default=1,min=0.001,max=10)
 
     cameraFollow.register()

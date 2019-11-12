@@ -18,6 +18,8 @@ class RegistrationCurve:
 
         return curve
 
+    
+
     def __init__(self, context, bvh_motion_0, bvh_motion_1):
         self.context = context
         
@@ -25,7 +27,7 @@ class RegistrationCurve:
         self.bvh_motion_1 = bvh_motion_1
         # we only accept 2 motion 
         # mean Mj and j = 0, 1
-        self.w = [0.0, 1.0]
+        self.w = [1.0, 0.0]
 
         def extractMotiondata(roots, nodes, frame_amount):
             M = []
@@ -37,9 +39,6 @@ class RegistrationCurve:
                 # M_f.append(Vector(NodeBVH.getRoot(nodes).anim_data[f+1][0:3]))
                 M_f.append(roots[f].co.xyz)
                 for node in nodes.values():
-                    # is root 
-                    if node.parent is None:
-                        continue
                     data = node.getAnimData(f)
                     M_f.append(Vector((
                          math.radians(data[3]),
@@ -90,9 +89,12 @@ class RegistrationCurve:
         self.generateTimewarpCurve()
         self.generateAligmentCurve()
 
+        self.w = [1.0, 0.0]
         self.generateBlendingMotion()
-
-
+        self.w = [0.5, 0.5]
+        self.generateBlendingMotion()
+        self.w = [0.0, 1.0]
+        self.generateBlendingMotion()
 
 
     #def createAlignmentCurve(self):
@@ -106,23 +108,6 @@ class RegistrationCurve:
             F0_end = F0 + (F1_end - F1)
         else:
             F1_end = F1 + (F0_end - F0)
-
-        # sum(w_1_i, i = 0~N-1) = 1
-        # assume every weight equal
-        
-
-        # y0 = [p_i.y for p_i in self.p_0[F0]]
-        # x0 = [p_i.x for p_i in self.p_0[F0]]
-
-        # y1 = [p_i.y for p_i in self.p_1[F1]]
-        # x1 = [p_i.x for p_i in self.p_1[F1]]
-
-       
-
-        # y0_bar = sum(w_i * y0[i] for i in range(n))
-        # x0_bar = sum(w_i * x0[i] for i in range(n))
-        # y1_bar = sum(w_i * y1[i] for i in range(n))
-        # x1_bar = sum(w_i * x1[i] for i in range(n))
 
         # 2D list to 1D list
         # https://www.geeksforgeeks.org/python-ways-to-flatten-a-2d-list/
@@ -149,15 +134,21 @@ class RegistrationCurve:
         y_0 = y0_bar - y1_bar * math.cos(theta) - x1_bar * math.sin(theta)
         x_0 = x0_bar + y1_bar * math.sin(theta) - x1_bar * math.cos(theta)
 
-        temp = [y_i + y_0 for y_i in y1]
-
-        #return RegistrationCurve.convertTransformVectorToMatrix((theta, y_0, x_0))
         return (theta, y_0, x_0)
 
     # (theta, y, x) to transform matrix 
-    @classmethod
-    def transformVectorToMatrix(cls, transform):
-        return Matrix.Translation(Vector((transform[2], transform[1], 0.0))) @ Matrix.Rotation(transform[0], 4, 'Z')
+    @staticmethod
+    def transformVectorToMatrix(vec):
+        return Matrix.Translation(Vector((vec[2], vec[1], 0.0))) @ Matrix.Rotation(vec[0], 4, 'Z')
+
+    @staticmethod
+    def transformMatrixToVector(mat):
+        loc, rot, sca = mat.decompose()
+        eul = rot.to_euler()
+        return Vector((eul.z, loc.y, loc.x))
+
+
+
 
 
     def generateTransformMap(self):
@@ -167,7 +158,6 @@ class RegistrationCurve:
             for F0 in range(len(self.p_0)):
                 row.append(self.getAlignmentTransformation(F0, F1))
             self.transform_map.append(row)
-
 
     def generateDistanceMap(self):
         # F0 is frame idx of motion 1
@@ -238,13 +228,24 @@ class RegistrationCurve:
         for u in range(len(self.S)):
             S0_u = self.S[u][0]
             S1_u = self.S[u][1]
+            
             self.A.append((
                 Vector((0.0, 0.0, 0.0)), 
                 Vector(self.transform_map[S0_u][S1_u])))
 
-        for i in range(1, len(self.A)):
-            if self.A[i][1][0] - self.A[i-1][1][0] > math.pi:
-                self.A[i][1][0] -= math.pi
+        for u in range(1, len(self.A)):
+            
+            if math.fabs(self.A[u][1][0] - self.A[u-1][1][0]) > 3.0:
+                old_radian = self.A[u][1][0]
+                new_radian = self.A[u][1][0] - math.pi if self.A[u][1][0] > self.A[u-1][1][0] else self.A[u][1][0] + math.pi
+
+                old_translate = Vector((self.A[u][1][2], self.A[u][1][1], 0.0))
+                new_translate = (
+                    Matrix.Translation(old_translate) @ Matrix.Rotation(old_radian - new_radian, 4, 'Z')).to_translation() 
+
+                self.A[u] = (
+                    Vector((0.0, 0.0, 0.0)), 
+                    Vector((new_radian, new_translate.y, new_translate.x)))
 
     def generateBlendingMotion(self):
 
@@ -294,11 +295,6 @@ class RegistrationCurve:
 
         T = []
         T.append(Vector((0.0, 0.0, 0.0)))
-        # tttt = self.w[0] * self.M_0[0][0] + self.w[1] * self.M_1[0][0]
-        # T.append(Vector((0.0, tttt.y, tttt.x)))
-        # T.append(Vector((0.0, self.M_1[0][0].y, self.M_1[0][0].x)))
-        #T.append(-self.A[0][1])
-        # T.append(Vector((-self.A[1][1][0], self.M_1[0][0].y, self.M_1[0][0].x)))
 
         t = 0
         u = 0
@@ -312,26 +308,20 @@ class RegistrationCurve:
             # i = 0~N-1
             # N is amount of joint
             for i in range(len(self.M_0[0])):
-                Bi_j = Vector((0.0, 0.0, 0.0))
                 if i == 0:
                     A_0 = self.transformVectorToMatrix(A(u)[0])
                     A_1 = self.transformVectorToMatrix(A(u)[1])
                     B_i.append(
-                        self.w[0] * A_0 @ M0(S(u)[0])[i] + 
-                        self.w[1] * A_1 @ M1(S(u)[1])[i] )
-                    # for j in range(len(self.w)):
-                    #     # Bi_j += self.w[j] * self.transformVectorToMatrix(delta_T[j]) @ self.transformVectorToMatrix(A(u)[j]) @ M0(S(u)[j])[i]
-                    #     Bi_j += self.w[j] * self.transformVectorToMatrix(A(u)[j]) @ M0(S(u)[j])[i]
+                        self.w[0] * (A_0 @ M0(S(u)[0])[i]) + 
+                        self.w[1] * (A_1 @ M1(S(u)[1])[i]) )
                 else:
                     B_i.append(
                         self.w[0] * M0(S(u)[0])[i] + 
                         self.w[1] * M1(S(u)[1])[i] )
-                    # for j in range(len(self.w)):
-                    #     Bi_j += self.w[j] * M0(S(u)[j])[i]
-                B_i.append(Bi_j)
+
 
             B_i[0] = self.transformVectorToMatrix(T[t]) @ B_i[0]
-            # B_i[0] = self.transformVectorToMatrix(T[0]) @ self.transformVectorToMatrix(A(u)[1]) @ M1(S(u)[1])[0]
+            # B_i[0] = self.transformVectorToMatrix(T[0]) @ self.transformVectorToMatrix(A(u)[0]) @ M1(S(u)[1])[0]
             B.append(B_i)
 
             delta_u = self.w[0] * (du / dS_0) + self.w[1] * (du / dS_1)
@@ -340,7 +330,13 @@ class RegistrationCurve:
 
             delta_T = []
             for j in range(len(self.w)):
-                delta_T.append(T[t-delta_t] + A(u-delta_u)[j] - A(u)[j])
+                T_i_0 = self.transformVectorToMatrix(T[t-delta_t])
+                A_i_0 = self.transformVectorToMatrix(A(u-delta_u)[j])
+                A_i_1 = self.transformVectorToMatrix(A(u)[j])
+                delta_T.append(
+                    self.transformMatrixToVector(
+                    T_i_0 @ A_i_0 @ A_i_1.inverted()))
+                # delta_T.append(T[t-delta_t] + A(u-delta_u)[j] - A(u)[j])
 
             T_i = Vector((0.0, 0.0, 0.0))
             for j in range(len(self.w)):
