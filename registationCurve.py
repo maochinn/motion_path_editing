@@ -1,8 +1,10 @@
 import bpy
+from bpy.types import Operator
 import math
 from mathutils import Vector, Euler, Matrix
 
-from .importBvh import NodeBVH
+
+from .importBvh import NodeBVH, MotionPathAnimation
 from .createBlenderThing import createPolyCurve
 
 
@@ -18,16 +20,46 @@ class RegistrationCurve:
 
         return curve
 
-    
+    @classmethod
+    def GetBlendingMotionByName(cls, name):
+        if cls.registration_curves != None:
+            for r_curve in cls.registration_curves:
+                if r_curve.blending_motion.name == name:
+                    return r_curve
+        return None
+
+    def updateBlendingInterpolation(self, w0):
+        for t in range(len(self.M_0)):
+            self.w_0[t] = w0
+        
+        if self.blending_motion is not None:
+            bpy.data.objects.remove(self.blending_motion)
+            self.blending_motion = None
+
+        self.blending_motion = self.generateBlendingMotion()
+        
+    def updateBlendingTransition(self):
+        for t in range(len(self.M_0)):
+            self.w_0[t] = 1.0 - (t / (len(self.M_0) - 1))
+
+        if self.blending_motion is not None:
+            bpy.data.objects.remove(self.blending_motion)
+
+        self.blending_motion = self.generateBlendingMotion()
 
     def __init__(self, context, bvh_motion_0, bvh_motion_1):
         self.context = context
         
+        self.name = bvh_motion_0.name + "_blend_" + bvh_motion_1.name
+
         self.bvh_motion_0 = bvh_motion_0
         self.bvh_motion_1 = bvh_motion_1
+
+        self.blending_motion = None
         # we only accept 2 motion 
         # mean Mj and j = 0, 1
-        self.w = [1.0, 0.0]
+
+        # weight of motion 0
 
         def extractMotiondata(roots, nodes, frame_amount):
             M = []
@@ -64,6 +96,10 @@ class RegistrationCurve:
 
             return p
 
+        self.w_0 = []
+        for t in range(self.bvh_motion_0.frames_bvh):
+            self.w_0.append(1.0)
+
         self.M_0 = extractMotiondata(
             self.bvh_motion_0.new_motion.data.splines[0].points.values(),
             self.bvh_motion_0.nodes_bvh, 
@@ -88,17 +124,6 @@ class RegistrationCurve:
         # create registration
         self.generateTimewarpCurve()
         self.generateAligmentCurve()
-
-        self.w = [1.0, 0.0]
-        self.generateBlendingMotion()
-        self.w = [0.5, 0.5]
-        self.generateBlendingMotion()
-        self.w = [0.0, 1.0]
-        self.generateBlendingMotion()
-
-
-    #def createAlignmentCurve(self):
-
 
     def getAlignmentTransformation(self, F0, F1, frame = 5):
         F0_end = min(F0 + frame, len(self.p_0))
@@ -148,14 +173,11 @@ class RegistrationCurve:
         return Vector((eul.z, loc.y, loc.x))
 
 
-
-
-
     def generateTransformMap(self):
         self.transform_map = []
-        for F1 in range(len(self.p_1)):
+        for F0 in range(len(self.p_0)):
             row = []
-            for F0 in range(len(self.p_0)):
+            for F1 in range(len(self.p_1)):
                 row.append(self.getAlignmentTransformation(F0, F1))
             self.transform_map.append(row)
 
@@ -175,18 +197,18 @@ class RegistrationCurve:
             return distance
 
         self.distance_map = []
-        for F1 in range(len(self.p_1)):
+        for F0 in range(len(self.p_0)):
             row = []
-            for F0 in range(len(self.p_0)):
+            for F1 in range(len(self.p_1)):    
                 row.append(D(F0, F1))
             self.distance_map.append(row)
 
     def generateTimewarpCurve(self):
         # refer: https://blog.csdn.net/seagal890/article/details/95028066
         def minimal_cost_connecting_path(cost):
-            w = len(cost[0])
-            h = len(cost)
-            dp = [[0 for x in range(w)] for y in range(h)]
+            w = len(cost)
+            h = len(cost[0])
+            dp = [[0 for y in range(h)] for x in range(w)]
 
             for i in range(1,w):
                 dp[i][0] = dp[i - 1][0] + cost[i][0] 
@@ -235,13 +257,16 @@ class RegistrationCurve:
 
         for u in range(1, len(self.A)):
             
-            if math.fabs(self.A[u][1][0] - self.A[u-1][1][0]) > 3.0:
+            # if delta thete > 0.7 radian, we will inverse that(+- pi radian) 
+            if math.fabs(self.A[u][1][0] - self.A[u-1][1][0]) > 0.7:
                 old_radian = self.A[u][1][0]
                 new_radian = self.A[u][1][0] - math.pi if self.A[u][1][0] > self.A[u-1][1][0] else self.A[u][1][0] + math.pi
 
                 old_translate = Vector((self.A[u][1][2], self.A[u][1][1], 0.0))
-                new_translate = (
-                    Matrix.Translation(old_translate) @ Matrix.Rotation(old_radian - new_radian, 4, 'Z')).to_translation() 
+                new_translate = old_translate + Matrix.Rotation(old_radian, 4, 'Z') @ self.M_1[self.S[u][1]][0] - Matrix.Rotation(new_radian, 4, 'Z') @ self.M_1[self.S[u][1]][0]
+
+                # temp1 = Matrix.Translation(old_translate) @ Matrix.Rotation(old_radian, 4, 'Z') @ self.M_1[self.S[u][1]][0]
+                # temp2 = Matrix.Translation(new_translate) @ Matrix.Rotation(new_radian, 4, 'Z') @ self.M_1[self.S[u][1]][0]
 
                 self.A[u] = (
                     Vector((0.0, 0.0, 0.0)), 
@@ -251,6 +276,16 @@ class RegistrationCurve:
 
         def linearInterpolation(f0, f1, t):
             return f0 * (1.0 - t) + f1 * t
+
+
+        def W0(f):
+            low = int(f)
+            high = low + 1
+
+            if high < len(self.w_0):
+                return linearInterpolation(self.w_0[low], self.w_0[high], f - low) 
+            else:
+                return self.w_0[-1]
 
         def A(u):
             low = int(u)
@@ -291,7 +326,7 @@ class RegistrationCurve:
             else:
                 return self.M_1[-1]
 
-        B = []
+        self.B = []
 
         T = []
         T.append(Vector((0.0, 0.0, 0.0)))
@@ -303,6 +338,8 @@ class RegistrationCurve:
         du = 1.0 / len(self.S)
         dS_0 = 1.0 / len(self.M_0)
         dS_1 = 1.0 / len(self.M_1)
+
+        w = (W0(0.0), 1.0 - W0(0.0))
         while u < len(self.S):
             B_i = []
             # i = 0~N-1
@@ -312,48 +349,170 @@ class RegistrationCurve:
                     A_0 = self.transformVectorToMatrix(A(u)[0])
                     A_1 = self.transformVectorToMatrix(A(u)[1])
                     B_i.append(
-                        self.w[0] * (A_0 @ M0(S(u)[0])[i]) + 
-                        self.w[1] * (A_1 @ M1(S(u)[1])[i]) )
+                        w[0] * (A_0 @ M0(S(u)[0])[i]) + 
+                        w[1] * (A_1 @ M1(S(u)[1])[i]) )
                 else:
                     B_i.append(
-                        self.w[0] * M0(S(u)[0])[i] + 
-                        self.w[1] * M1(S(u)[1])[i] )
+                        w[0] * M0(S(u)[0])[i] + 
+                        w[1] * M1(S(u)[1])[i] )
 
 
             B_i[0] = self.transformVectorToMatrix(T[t]) @ B_i[0]
+            B_i[1].z += T[t][0]
             # B_i[0] = self.transformVectorToMatrix(T[0]) @ self.transformVectorToMatrix(A(u)[0]) @ M1(S(u)[1])[0]
-            B.append(B_i)
+            self.B.append(B_i)
 
-            delta_u = self.w[0] * (du / dS_0) + self.w[1] * (du / dS_1)
+            delta_u = w[0] * (du / dS_0) + w[1] * (du / dS_1)
             t += delta_t
             u += delta_u
 
             delta_T = []
-            for j in range(len(self.w)):
+            for j in range(len(w)):
                 T_i_0 = self.transformVectorToMatrix(T[t-delta_t])
                 A_i_0 = self.transformVectorToMatrix(A(u-delta_u)[j])
                 A_i_1 = self.transformVectorToMatrix(A(u)[j])
                 delta_T.append(
                     self.transformMatrixToVector(
                     T_i_0 @ A_i_0 @ A_i_1.inverted()))
-                # delta_T.append(T[t-delta_t] + A(u-delta_u)[j] - A(u)[j])
 
             T_i = Vector((0.0, 0.0, 0.0))
-            for j in range(len(self.w)):
-                T_i += self.w[j] * delta_T[j]
+            for j in range(len(w)):
+                T_i += w[j] * delta_T[j]
             T.append(T_i)
+
+            w = (W0(S(u)[0]), 1.0 - W0(S(u)[0]))
             
 
+        return createPolyCurve(
+            self.context, self.context.scene.collection, 
+            self.name, [B_i[0] for B_i in self.B])
 
-        temp = [B_i[0] for B_i in B]
-        createPolyCurve(self.context, self.context.scene.collection, "blending motion", temp)
+    def createMotionPathAnimation(self):
 
+        nodes_clone = self.bvh_motion_0.nodes_bvh.copy()
+        # set nodes to initial position
+        NodeBVH.updateNodesWorldPosition(nodes_clone, -1)
 
+        for node in nodes_clone.values():
+            node.anim_data.clear()
+            node.anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+            node.position_idx = {'X': 0, 'Y': 1, 'Z': 2}
+            node.rotation_idx = {'X': 3, 'Y': 4, 'Z': 5}
+
+        for B_i in self.B:
+            for j, node in enumerate(nodes_clone.values()):
+                if node.parent is None:
+                    node.anim_data.append((
+                        B_i[0].x, B_i[0].y, B_i[0].z, 
+                        math.degrees(B_i[1].x), math.degrees(B_i[1].y), math.degrees(B_i[1].z)))
+                else:
+                    node.anim_data.append((
+                        0.0, 0.0, 0.0, 
+                        math.degrees(B_i[j+1].x), math.degrees(B_i[j+1].y), math.degrees(B_i[j+1].z)))
             
+        return MotionPathAnimation.AddPathAnimationFromCreated(
+            self.context, self.name, nodes_clone, len(self.B), self.bvh_motion_0.frame_time_bvh)   
 
-            
+class MAOGenerateRegistrationCurve(Operator):
+    bl_idname = "mao_animation.registration_curve"
+    bl_label = "combine two motion animation to generate registration curve"
+    bl_description = "OUO/"
+
+    @classmethod
+    def poll(cls, context):
+        # path_animation is not empty
+        motion_1_name = context.scene.select_motion_1_name
+        motion_2_name = context.scene.select_motion_2_name
+
+        motion_1 = MotionPathAnimation.GetPathAnimationByName(motion_1_name)
+        motion_2 = MotionPathAnimation.GetPathAnimationByName(motion_2_name)
+
+        if motion_1 is None or motion_2 is None:
+            return False
+
+        return True
+
+    def execute(self, context):
+        motion_1_name = context.scene.select_motion_1_name
+        motion_2_name = context.scene.select_motion_2_name
+
+        motion_1 = MotionPathAnimation.GetPathAnimationByName(motion_1_name)
+        motion_2 = MotionPathAnimation.GetPathAnimationByName(motion_2_name)
+
+        blending_motion = RegistrationCurve.AddRegistrationCurve(context, motion_1, motion_2)
+        blending_motion.updateBlendingInterpolation(bpy.context.scene.bvh_motion_1_weight)
+
+        return {'FINISHED'}
+
+class MAORegistrationCurveToPathAnimation(Operator):
+    bl_idname = "mao_animation.registration_curve_to_path_animation"
+    bl_label = "generate registration curve to motion path animation"
+    bl_description = "OUO/"
+
+    @classmethod
+    def poll(cls, context):
+        for ob in context.selected_objects:
+            r_curve = RegistrationCurve.GetBlendingMotionByName(ob.name)
+            if r_curve is not None:
+                return True
+        return False
+
+    def execute(self, context):
+        for ob in context.selected_objects:
+            r_curve = RegistrationCurve.GetBlendingMotionByName(ob.name)
+            if r_curve is not None:
+                r_curve.createMotionPathAnimation()
+
+        return {'FINISHED'}
 
 
-  
+def draw(context, layout):
+    row = layout.row()
+    row.prop_search(
+        data=context.scene,
+        property="select_motion_1_name",
+        search_data=bpy.data,
+        search_property="collections",
+        text="motion 1")
+    row = layout.row()
+    row.prop_search(
+        data=context.scene,
+        property="select_motion_2_name",
+        search_data=bpy.data,
+        search_property="collections",
+        text="motion 2")
+    row = layout.row()
+    row.prop(context.scene,"bvh_motion_1_weight",text="motion 1 w")
+    
+    row = layout.row()
+    row.operator('mao_animation.registration_curve', text = "generate registration curve")
+
+    row = layout.row()
+    row.operator('mao_animation.registration_curve_to_path_animation', text = "generate motion path")
+
+def register():
+    bpy.utils.register_class(MAOGenerateRegistrationCurve)
+    bpy.utils.register_class(MAORegistrationCurveToPathAnimation)
+    
+    bpy.types.Scene.select_motion_1_name = bpy.props.StringProperty()
+    bpy.types.Scene.select_motion_2_name = bpy.props.StringProperty()
+
+    def updateBlendingWeight(self, context):
+        # print(bpy.context.scene.bvh_motion_1_weight)
+        for ob in context.selected_objects:
+            r_curve = RegistrationCurve.GetBlendingMotionByName(ob.name)
+            if r_curve is not None:
+                r_curve.updateBlendingInterpolation(bpy.context.scene.bvh_motion_1_weight)
+                r_curve.blending_motion.select_set(True)
+
+    bpy.types.Scene.bvh_motion_1_weight = bpy.props.FloatProperty(default=1.0,min=0.0,max=1.0, update=updateBlendingWeight)
+
+def unregister():
+    bpy.utils.unregister_class(MAOGenerateRegistrationCurve)
+    bpy.utils.unregister_class(MAORegistrationCurveToPathAnimation)
+
+    del bpy.types.Scene.select_motion_1_name
+    del bpy.types.Scene.select_motion_2_name
+    del bpy.types.Scene.bvh_motion_1_weight
     
         

@@ -238,7 +238,7 @@ class MotionPathAnimation:
         path_animation = MotionPathAnimation(context, axis)
 
         if path_animation != None:
-            path_animation.load_bvh(filepath)
+            path_animation.loadBVHFromFile(filepath)
 
             cls.path_animations.append(path_animation)
         
@@ -251,6 +251,20 @@ class MotionPathAnimation:
 
         cls.path_animations.append(path_animation)
         
+        return path_animation
+
+    @classmethod
+    def AddPathAnimationFromCreated(cls, context, name, nodes_bvh, frames_bvh, frame_time_bvh):
+        if cls.path_animations == None:
+            cls.path_animations = []
+
+        path_animation = MotionPathAnimation(context)
+
+        if path_animation != None:
+            path_animation.loadBVHFromCreated(name, nodes_bvh, frames_bvh, frame_time_bvh)
+
+            cls.path_animations.append(path_animation)
+
         return path_animation
 
     @classmethod
@@ -349,7 +363,7 @@ class MotionPathAnimation:
     # parameter:
     # context: bpy.context
     # file_path: str, path of bvh
-    def load_bvh(self, file_path):
+    def loadBVHFromFile(self, file_path):
         self.file_path = file_path
         self.nodes_bvh, self.frames_bvh, self.frame_time_bvh = self.readNodeBVH(self.file_path)
 
@@ -372,6 +386,18 @@ class MotionPathAnimation:
 
             self.init_animation_object()
     
+    # if we already have all node data...
+    def loadBVHFromCreated(self, name, nodes_bvh, frames_bvh, frame_time_bvh):
+        
+        self.file_path = None
+        
+        self.name = name
+        self.nodes_bvh = nodes_bvh
+        self.frames_bvh = frames_bvh
+        self.frame_time_bvh = frame_time_bvh
+
+        self.init_animation_object()
+
     # call once to create skeleton and path edit event
     def init_animation_object(self):
         if self.collection != None:
@@ -452,7 +478,7 @@ class MotionPathAnimation:
                 name = file_lines[line_idx][1]
                 local_offset = Vector()
                 world_offset = Vector()
-                # position_idx = {'x': -1, 'y': -1, 'z': -1}
+                # position_idx = {'X': 0, 'Y': 1, 'Z': 2}
                 position_idx = {}
                 rotation_idx = {}
 
@@ -574,7 +600,7 @@ class MotionPathAnimation:
 
         return nodes_bvh, frames, frame_time
     
-    # read key frame animation info to nodes_bvh
+    # read key frame animation info into nodes_bvh
     # parameter:
     # file_path:    str, path of file
     def readKeyFrameBVH(self, file_path):
