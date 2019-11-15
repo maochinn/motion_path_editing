@@ -38,6 +38,7 @@ class NodeBVH:
         # A list one tuple's one for each frame: (locx, locy, locz, rotx, roty, rotz),
         # euler rotation ALWAYS stored xyz order, even when native used.
         'anim_data',
+        'new_anim_data',
         # Index from the file, not strictly needed but nice to maintain order.
         'index',
         # e.g anim_data[i] order is (Xposition Yposition Zposition Zrotation Xrotation Yrotation)
@@ -70,6 +71,7 @@ class NodeBVH:
         # List of 6 length tuples: (lx, ly, lz, rx, ry, rz)
         # even if the channels aren't used they will just be zero.
         self.anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+        self.new_anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
     
     def copy(self):
         node = NodeBVH(self.name, self.local_head.copy(), self.world_head.copy(), 
@@ -96,6 +98,29 @@ class NodeBVH:
             idx = frame_idx + 1
         return self.anim_data[idx]
 
+    def getNewAnimData(self, frame_idx):
+        idx = 0
+        if frame_idx + 1 < len(self.new_anim_data):
+            idx = frame_idx + 1
+        return self.new_anim_data[idx]
+
+    def setNewAnimData(self, frame_idx, new_data):
+        if frame_idx + 1 < len(self.new_anim_data):
+            self.new_anim_data[frame_idx + 1] = new_data
+
+    def getRotationOrder(self):
+        order = ''
+        start = min(self.rotation_idx.values())
+        for i in range(start, start+3):
+            if self.rotation_idx['X'] == i:
+                order += 'X'
+            elif self.rotation_idx['Y'] == i:
+                order += 'Y'
+            elif self.rotation_idx['Z'] == i:
+                order += 'Z'
+
+        return order
+
     @classmethod
     def getRotation(cls, node, frame_idx):
         node_data = node.getAnimData(frame_idx)
@@ -107,14 +132,23 @@ class NodeBVH:
 
         rotation = Matrix.Identity(4)
         # start = min(node.rotation_idx, key=node.rotation_idx.get)
-        start = min(node.rotation_idx.values())
-        for i in range(start, start+3):
-            if node.rotation_idx['X'] == i:
+        # start = min(node.rotation_idx.values())
+        # for i in range(start, start+3):
+        #     if node.rotation_idx['X'] == i:
+        #         rotation = rotation @ rotation_X
+        #     elif node.rotation_idx['Y'] == i:
+        #         rotation = rotation @ rotation_Y
+        #     elif node.rotation_idx['Z'] == i:
+        #         rotation = rotation @ rotation_Z
+
+        order = node.getRotationOrder()
+        for i in range(len(order)):
+            if order[i] == 'X':
                 rotation = rotation @ rotation_X
-            elif node.rotation_idx['Y'] == i:
+            elif order[i] == 'Y':
                 rotation = rotation @ rotation_Y
-            elif node.rotation_idx['Z'] == i:
-                rotation = rotation @ rotation_Z
+            elif order[i] == 'Z':
+                rotation = rotation @ rotation_Z  
 
         return rotation
         
@@ -140,6 +174,13 @@ class NodeBVH:
         node.world_head = node.model_mat @ Vector((0.0, 0.0, 0.0))
         node.world_tail = node.model_mat @ Vector(node.local_tail - node.local_head)
        
+        if node.parent is None:
+            eul = node.model_mat.to_euler(node.getRotationOrder()[::-1])
+            node.setNewAnimData(
+                frame_idx,
+                (node.world_head.x, node.world_head.y, node.world_head.z,
+                math.degrees(eul.x), math.degrees(eul.y), math.degrees(eul.z)))
+
 
         for child in node.children:
             cls.updateWorldPosition(child, node.model_mat, frame_idx)
@@ -649,6 +690,7 @@ class MotionPathAnimation:
                     line_idx += len(node.rotation_idx)
                     
                     node.anim_data.append(list(data))
+                    node.new_anim_data.append(list(data))
 
 
     #

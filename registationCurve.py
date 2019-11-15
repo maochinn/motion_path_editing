@@ -61,37 +61,40 @@ class RegistrationCurve:
 
         # weight of motion 0
 
-        def extractMotiondata(roots, nodes, frame_amount):
+        def extractMotiondata(skeleton_name, roots, nodes, frame_amount):
             M = []
             for f in range(0, frame_amount):
-                # M[f] = (p_R(f), q_1(f), q_2(f), ... , q_n(f)) 
-                # p_R is position of root
-                # q_i is rotation of ith joint
                 M_f = []
-                # M_f.append(Vector(NodeBVH.getRoot(nodes).anim_data[f+1][0:3]))
                 M_f.append(roots[f].co.xyz)
-                for node in nodes.values():
-                    data = node.getAnimData(f)
-                    M_f.append(Vector((
-                         math.radians(data[3]),
-                         math.radians(data[4]),
-                         math.radians(data[5]))))
+                for name in skeleton_name:
+                    joints = [node for node in nodes if name == node.name]
+                    if joints:
+                        node = joints[0]
+                        data = node.getNewAnimData(f)
+                        M_f.append(Vector((
+                            math.radians(data[3]),
+                            math.radians(data[4]),
+                            math.radians(data[5]))))
+                    else:
+                        print("ERROR::TWO_MOTION::SKELETON::UNSAME")
+                        return None
 
                 M.append(tuple(M_f))
 
             return M
 
-        def extractJointPosition(skeleton_objs, nodes, frame_amount):
+        def extractJointPosition(skeleton_objs, motion_name, skeleton_name, frame_amount):
             p = []
             for f in range(frame_amount):
                 p_f = []
-                # NodeBVH.updateNodesWorldPosition(nodes, f)
-                # for node in nodes.values():
-                #     p_f.append(node.world_head.xyz)
                 bpy.context.scene.frame_set(f)
-                for ob in skeleton_objs:
-                    if any(x in ob.name for x in ['_head', '_tail']):
-                        p_f.append(ob.location.xyz)
+                for name in skeleton_name:
+                    joint_position = [ob.location.xyz for ob in skeleton_objs if name in ob.name]
+                    if joint_position:
+                        p_f.append(joint_position[0])
+                    else:
+                        print("ERROR::TWO_MOTION::SKELETON::UNSAME")
+                        return None
                 p.append(p_f)
 
             return p
@@ -100,22 +103,41 @@ class RegistrationCurve:
         for t in range(self.bvh_motion_0.frames_bvh):
             self.w_0.append(1.0)
 
+        skeleton_name = []
+        root = NodeBVH.getRoot(self.bvh_motion_0.nodes_bvh)
+        skeleton_name.append(root.name)
+        for node in self.bvh_motion_0.nodes_bvh.values():
+            if node is not root:
+                skeleton_name.append(node.name)
+
+
         self.M_0 = extractMotiondata(
+            skeleton_name,
             self.bvh_motion_0.new_motion.data.splines[0].points.values(),
-            self.bvh_motion_0.nodes_bvh, 
+            self.bvh_motion_0.nodes_bvh.values(), 
             self.bvh_motion_0.frames_bvh)
         self.M_1 = extractMotiondata(
-            self.bvh_motion_1.new_motion.data.splines[0].points.values(), 
-            self.bvh_motion_1.nodes_bvh, 
+            skeleton_name,
+            self.bvh_motion_1.new_motion.data.splines[0].points.values(),
+            self.bvh_motion_1.nodes_bvh.values(), 
             self.bvh_motion_1.frames_bvh)
+
+        skeleton_name = []
+        # set skeleton order
+        for ob in self.bvh_motion_0.skeleton.all_objects.values():
+                if any(x in ob.name for x in ['_head', '_tail']):
+                    skeleton_name.append(ob.name[ob.name.rfind("."):])
+
 
         self.p_0 = extractJointPosition(
             self.bvh_motion_0.skeleton.all_objects.values(),
-            self.bvh_motion_0.nodes_bvh, 
+            self.bvh_motion_0.name,
+            skeleton_name, 
             self.bvh_motion_0.frames_bvh)
         self.p_1 = extractJointPosition(
             self.bvh_motion_1.skeleton.all_objects.values(),
-            self.bvh_motion_1.nodes_bvh,
+            self.bvh_motion_1.name,
+            skeleton_name,
             self.bvh_motion_1.frames_bvh)
 
         self.generateTransformMap()
@@ -342,24 +364,28 @@ class RegistrationCurve:
         w = (W0(0.0), 1.0 - W0(0.0))
         while u < len(self.S):
             B_i = []
+
+            A0_u = self.transformVectorToMatrix(A(u)[0])
+            A1_u = self.transformVectorToMatrix(A(u)[1])
+
+            M0_u = M0(S(u)[0])
+            M1_u = M1(S(u)[1])
             # i = 0~N-1
             # N is amount of joint
-            for i in range(len(self.M_0[0])):
+            for i in range(len(M0_u)):
                 if i == 0:
-                    A_0 = self.transformVectorToMatrix(A(u)[0])
-                    A_1 = self.transformVectorToMatrix(A(u)[1])
                     B_i.append(
-                        w[0] * (A_0 @ M0(S(u)[0])[i]) + 
-                        w[1] * (A_1 @ M1(S(u)[1])[i]) )
+                        w[0] * (A0_u @ M0_u[i]) + 
+                        w[1] * (A1_u @ M1_u[i]) )
                 else:
                     B_i.append(
-                        w[0] * M0(S(u)[0])[i] + 
-                        w[1] * M1(S(u)[1])[i] )
+                        w[0] * M0_u[i] + 
+                        w[1] * M1_u[i] )
 
 
             B_i[0] = self.transformVectorToMatrix(T[t]) @ B_i[0]
-            B_i[1].z += T[t][0]
-            # B_i[0] = self.transformVectorToMatrix(T[0]) @ self.transformVectorToMatrix(A(u)[0]) @ M1(S(u)[1])[0]
+            # B_i[0] = self.transformVectorToMatrix(T[0]) @ self.transformVectorToMatrix(A(0)[0]) @ M0(S(u)[1])[0]
+            # B_i[0] = self.transformVectorToMatrix(T[0]) @ self.transformVectorToMatrix(A(0)[1]) @ M1(S(u)[1])[0]
             self.B.append(B_i)
 
             delta_u = w[0] * (du / dS_0) + w[1] * (du / dS_1)
@@ -396,8 +422,6 @@ class RegistrationCurve:
         for node in nodes_clone.values():
             node.anim_data.clear()
             node.anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
-            node.position_idx = {'X': 0, 'Y': 1, 'Z': 2}
-            node.rotation_idx = {'X': 3, 'Y': 4, 'Z': 5}
 
         for B_i in self.B:
             for j, node in enumerate(nodes_clone.values()):
@@ -411,7 +435,7 @@ class RegistrationCurve:
                         math.degrees(B_i[j+1].x), math.degrees(B_i[j+1].y), math.degrees(B_i[j+1].z)))
             
         return MotionPathAnimation.AddPathAnimationFromCreated(
-            self.context, self.name, nodes_clone, len(self.B), self.bvh_motion_0.frame_time_bvh)   
+            self.context, self.blending_motion.name, nodes_clone, len(self.B), self.bvh_motion_0.frame_time_bvh)   
 
 class MAOGenerateRegistrationCurve(Operator):
     bl_idname = "mao_animation.registration_curve"
