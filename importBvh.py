@@ -84,6 +84,10 @@ class NodeBVH:
         for data in self.anim_data:
             node.anim_data.append([data[0], data[1], data[2], data[3], data[4], data[5]])
 
+        node.new_anim_data = []
+        for data in self.new_anim_data:
+            node.new_anim_data.append([data[0], data[1], data[2], data[3], data[4], data[5]]) 
+
         return node
 
     def hasLocation(self):
@@ -120,6 +124,27 @@ class NodeBVH:
                 order += 'Z'
 
         return order
+
+    @classmethod
+    def nodesBVHCopy(cls, nodes_bvh, frames_bvh):
+        nodes_clone = nodes_bvh.copy()
+        for node in nodes_bvh.values():
+            nodes_clone[node.name] = node.copy()
+        for node in nodes_bvh.values():
+            if node.parent:
+                parent_name = node.parent.name
+                nodes_clone[node.name].parent = nodes_clone[parent_name]
+                
+            if node.children:
+                childs_name = [child_node.name for child_node in node.children]
+                nodes_clone[node.name].children = []
+                for child_name in childs_name:
+                    nodes_clone[node.name].children.append(nodes_clone[child_name])
+
+        for frame_idx in range(frames_bvh):
+            NodeBVH.updateNodesWorldPosition(nodes_clone, frame_idx)
+
+        return nodes_clone
 
     @classmethod
     def getRotation(cls, node, frame_idx):

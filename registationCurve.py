@@ -415,24 +415,33 @@ class RegistrationCurve:
 
     def createMotionPathAnimation(self):
 
-        nodes_clone = self.bvh_motion_0.nodes_bvh.copy()
+        nodes_clone = NodeBVH.nodesBVHCopy(
+            self.bvh_motion_0.nodes_bvh, self.bvh_motion_0.frames_bvh)
+
+
         # set nodes to initial position
         NodeBVH.updateNodesWorldPosition(nodes_clone, -1)
 
         for node in nodes_clone.values():
             node.anim_data.clear()
             node.anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+            node.new_anim_data.clear()
+            node.new_anim_data = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
 
         for B_i in self.B:
             for j, node in enumerate(nodes_clone.values()):
                 if node.parent is None:
-                    node.anim_data.append((
+                    data = (
                         B_i[0].x, B_i[0].y, B_i[0].z, 
-                        math.degrees(B_i[1].x), math.degrees(B_i[1].y), math.degrees(B_i[1].z)))
+                        math.degrees(B_i[1].x), math.degrees(B_i[1].y), math.degrees(B_i[1].z))
+                    node.anim_data.append(data)
+                    node.new_anim_data.append(data)
                 else:
-                    node.anim_data.append((
+                    data = (
                         0.0, 0.0, 0.0, 
-                        math.degrees(B_i[j+1].x), math.degrees(B_i[j+1].y), math.degrees(B_i[j+1].z)))
+                        math.degrees(B_i[j+1].x), math.degrees(B_i[j+1].y), math.degrees(B_i[j+1].z))
+                    node.anim_data.append(data)
+                    node.new_anim_data.append(data)
             
         return MotionPathAnimation.AddPathAnimationFromCreated(
             self.context, self.blending_motion.name, nodes_clone, len(self.B), self.bvh_motion_0.frame_time_bvh)   
@@ -464,7 +473,10 @@ class MAOGenerateRegistrationCurve(Operator):
         motion_2 = MotionPathAnimation.GetPathAnimationByName(motion_2_name)
 
         blending_motion = RegistrationCurve.AddRegistrationCurve(context, motion_1, motion_2)
-        blending_motion.updateBlendingInterpolation(bpy.context.scene.bvh_motion_1_weight)
+        if bpy.context.scene.r_curve_blending_method == 'INT':
+            blending_motion.updateBlendingInterpolation(bpy.context.scene.r_curve_motion_1_weight)
+        elif bpy.context.scene.r_curve_blending_method == 'TRA':
+            blending_motion.updateBlendingTransition()
 
         return {'FINISHED'}
 
@@ -506,8 +518,11 @@ def draw(context, layout):
         search_property="collections",
         text="motion 2")
     row = layout.row()
-    row.prop(context.scene,"bvh_motion_1_weight",text="motion 1 w")
+    row.prop(context.scene,"r_curve_motion_1_weight",text="motion 1 w")
     
+    row = layout.row()
+    row.prop(context.scene,"r_curve_blending_method",text="blending mehod")
+
     row = layout.row()
     row.operator('mao_animation.registration_curve', text = "generate registration curve")
 
@@ -522,14 +537,22 @@ def register():
     bpy.types.Scene.select_motion_2_name = bpy.props.StringProperty()
 
     def updateBlendingWeight(self, context):
-        # print(bpy.context.scene.bvh_motion_1_weight)
+        # print(bpy.context.scene.r_curve_motion_1_weight)
         for ob in context.selected_objects:
             r_curve = RegistrationCurve.GetBlendingMotionByName(ob.name)
             if r_curve is not None:
-                r_curve.updateBlendingInterpolation(bpy.context.scene.bvh_motion_1_weight)
+                r_curve.updateBlendingInterpolation(bpy.context.scene.r_curve_motion_1_weight)
                 r_curve.blending_motion.select_set(True)
 
-    bpy.types.Scene.bvh_motion_1_weight = bpy.props.FloatProperty(default=1.0,min=0.0,max=1.0, update=updateBlendingWeight)
+    bpy.types.Scene.r_curve_motion_1_weight = bpy.props.FloatProperty(default=1.0,min=0.0,max=1.0, update=updateBlendingWeight)
+
+    bpy.types.Scene.r_curve_blending_method = bpy.props.EnumProperty(
+            name="blending method",
+            description="Select blending method",
+            items=(('INT', "Interpolation", "weight is fixed"),
+                   ('TRA', "Transition", "weight will 0 to 1")),
+            default='INT',
+            )
 
 def unregister():
     bpy.utils.unregister_class(MAOGenerateRegistrationCurve)
@@ -537,6 +560,6 @@ def unregister():
 
     del bpy.types.Scene.select_motion_1_name
     del bpy.types.Scene.select_motion_2_name
-    del bpy.types.Scene.bvh_motion_1_weight
+    del bpy.types.Scene.r_curve_motion_1_weight
     
         
